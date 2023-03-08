@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as tnn
 from scipy.optimize import minimize,fmin_l_bfgs_b
-use_cuda = 1
+use_cuda = 0
 torchdeviceId = torch.device('cuda:0') if use_cuda else 'cpu'
 torchdtype = torch.float64
 from torch.autograd import grad
@@ -25,8 +25,8 @@ def L2Error(mu_1,mu_2):
 def L(vf):
     weight = torch.Tensor([[[[-1,-1,-1],[-1,8,-1],[-1,-1,-1]]]]).to(dtype=torchdtype, device=torchdeviceId)
     out = tnn.conv2d(vf, weight.repeat(2,1,1,1), bias=None,groups=2, stride=1, padding='same') 
-    #out = tnn.conv2d(out, weight.repeat(2,1,1,1), bias=None,groups=2, stride=1, padding='same') 
-    #out = tnn.conv2d(out, weight.repeat(2,1,1,1), bias=None,groups=2, stride=1, padding='same') 
+    out = tnn.conv2d(out, weight.repeat(2,1,1,1), bias=None,groups=2, stride=1, padding='same') 
+    out = tnn.conv2d(out, weight.repeat(2,1,1,1), bias=None,groups=2, stride=1, padding='same') 
     return out
     
 
@@ -34,7 +34,7 @@ def L(vf):
 def InnerProd(X,source,p,m):
     pm=p[0,0]
     pX= pm*X.transpose(0,2)
-    return (((pX)**2).sum(dim=0)/(pm)).sum()    
+    return ((L(pX)**2).sum(dim=0)/(pm)).sum()    
 
 
 def enr_OT(source,target,grid,match_coeff,path_coeff):

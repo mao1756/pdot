@@ -16,7 +16,7 @@ def enr_OT(source,target,grid,match_coeff,path_coeff,inner_prod):
         path_enr=0
         for i in range(0,vecs.shape[0]):
             X=vecs[i]
-            path_enr += inner_prod(X,source,p,m)
+            path_enr += inner_prod(X,source,p,grid)
             p=resample_density(p,grid,X)
         return path_coeff*path_enr + match_coeff*L2_error(p,target)
     return energy

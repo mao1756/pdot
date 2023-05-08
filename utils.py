@@ -18,7 +18,6 @@ def gaussian(a,b,G,grid):
     mu=mu/mu.sum()
     return mu.reshape(1,1,m,m).to(dtype=torchdtype, device=torchdeviceId)
 
-
 def resample_density(p,grid,X):
     m=grid.shape[1]
     pm=p[0,0]
@@ -28,8 +27,7 @@ def resample_density(p,grid,X):
     dpXdy=pX[1].diff(dim=1)
     pdot[1:-1]-=dpXdx[1:]
     pdot[:,1:-1]-=dpXdy[:,1:]
-    return p+pdot.transpose(0,1)
-
+    return p+pdot
 
 def upsampleT(vecs,N):
     N0=vecs.shape[0]
@@ -66,6 +64,29 @@ def make_and_plot_sequence(mu_1,mu_2,vecs, grid):
         axes[2*i-1].set_xlim([-1, 1])
         axes[2*i-1].set_ylim([-1, 1])
         p=resample_density(p,grid,X)
+        ls+=[p.cpu().numpy()]
+        axes[2*i].pcolormesh(grid[0,:,:,0].cpu(),grid[0,:,:,1].cpu(), p[0,0].transpose(0,1).cpu(), vmin=0, vmax=vmax)
+        axes[2*i].set_xlim([-1, 1])
+        axes[2*i].set_ylim([-1, 1])
+    plt.show()
+    return ls
+
+def make_and_plot_sequence_u(mu_1,mu_2,vecs,funs, grid):
+    vmax= 1.2*max(mu_1.max(),mu_2.max()).item()
+    m=grid.shape[1]
+    p=mu_1
+    ls=[p.cpu().numpy()]
+    T=vecs.shape[0]
+    fig, axes = plt.subplots(ncols=2*T-1, figsize=(20*T-10, 10))
+    axes[0].pcolormesh(grid[0,:,:,0].cpu(),grid[0,:,:,1].cpu(), p[0,0].transpose(0,1).cpu(), vmin=0, vmax=vmax)
+    axes[0].set_xlim([-1, 1])
+    axes[0].set_ylim([-1, 1])
+    for i in range(1,vecs.shape[0]):
+        X=vecs[i]
+        axes[2*i-1].quiver(grid[0,:,:,0].cpu(),grid[0,:,:,1].cpu(),-(1/T-1)*X[:,:,0].cpu(),-(1/T-1)*X[:,:,1].cpu())
+        axes[2*i-1].set_xlim([-1, 1])
+        axes[2*i-1].set_ylim([-1, 1])
+        p=resample_density(p,grid,X)+funs[i,:,:,0]
         ls+=[p.cpu().numpy()]
         axes[2*i].pcolormesh(grid[0,:,:,0].cpu(),grid[0,:,:,1].cpu(), p[0,0].transpose(0,1).cpu(), vmin=0, vmax=vmax)
         axes[2*i].set_xlim([-1, 1])

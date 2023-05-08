@@ -1,5 +1,5 @@
 import torch
-import torch.nn.functional as tnn
+import torch.nn as tnn
 from scipy.optimize import minimize,fmin_l_bfgs_b
 from utils import *
 use_cuda = 0

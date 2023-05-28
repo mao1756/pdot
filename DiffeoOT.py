@@ -68,3 +68,68 @@ def DiffeoOT_multires(mu_1,mu_2,grid,params,inner_prod):
             max_iter=param['match_coeff']            
         vecs = DiffeoOT(mu_1,mu_2,grid,T,match_coeff,path_coeff,vecs,inner_prod)        
     return vecs
+
+
+"""
+The same functions but with the periodic boundary condition (resample_density -> resampe_density_periodic)
+"""
+
+def enr_OT_periodic(source,target,grid,match_coeff,path_coeff,inner_prod):
+    m=grid.shape[1]
+    def energy(vecs):
+        p=source
+        path_enr=0
+        for i in range(0,vecs.shape[0]):
+            X=vecs[i]
+            path_enr += inner_prod(X,source,p,grid)
+            p=resample_density_periodic(p,grid,X)
+        return path_coeff*path_enr + match_coeff*L2_error(p,target)
+    return energy
+    
+def path_length_periodic(source,vecs,grid,inner_prod):    
+    path_enr=[]
+    p=source
+    for i in range(1,vecs.shape[0]):
+        path_enr += [inner_prod(vecs[i],source,p,grid).sqrt().item()]
+        p=resample_density_periodic(p,grid,vecs[i])
+    return np.array(path_enr)    
+
+def DiffeoOT_periodic(mu_1,mu_2,grid,T,match_coeff,path_coeff,vecs,inner_prod,max_iter=100000):
+    m=grid.shape[1]
+    n=m
+    
+    vecs = vecs[1:]    
+    energy = enr_OT_periodic(mu_1,mu_2,grid,match_coeff,path_coeff,inner_prod)
+
+    def gradE(vecs):
+        qvecs = vecs.clone().requires_grad_(True)
+        return grad(energy(qvecs), qvecs, create_graph=True)
+
+    def funopt(vecs):
+        vecs=torch.from_numpy(vecs.reshape(T-1,m,n,2)).to(dtype=torchdtype, device=torchdeviceId)
+        return float(energy(vecs).detach().cpu().numpy())
+
+    def dfunopt(vecs):
+        vecs = torch.from_numpy(vecs.reshape(T-1,m,n,2)).to(dtype=torchdtype, device=torchdeviceId)
+        [Gvecs] = gradE(vecs)
+        Gvecs = Gvecs.detach().cpu().numpy().flatten().astype('float64')
+        return Gvecs
+
+    xopt,fopt,Dic=fmin_l_bfgs_b(funopt, vecs.cpu().numpy().flatten(), fprime=dfunopt, pgtol=1e-09, epsilon=1e-15, maxiter=max_iter, iprint = 1, maxls=20,maxfun=150000)
+    vecs = torch.cat([torch.zeros((1,m,n,2)),torch.from_numpy(xopt.reshape(T-1,m,n,2))], dim=0).to(dtype=torchdtype, device=torchdeviceId)
+    return vecs
+
+def DiffeoOT_multires_periodic(mu_1,mu_2,grid,params,inner_prod):
+    m=grid.shape[1]
+    n=grid.shape[2]    
+    vecs = torch.zeros((2,m,n,2)).to(dtype=torchdtype, device=torchdeviceId)      
+    for param in params:
+        T=param['T']
+        match_coeff=param['match_coeff']
+        path_coeff=param['path_coeff']        
+        if vecs.shape[0]<T:
+            vecs=upsampleT(vecs,T)        
+        if ('match_coeff' in param):
+            max_iter=param['match_coeff']            
+        vecs = DiffeoOT_periodic(mu_1,mu_2,grid,T,match_coeff,path_coeff,vecs,inner_prod, max_iter= 1000000)        
+    return vecs

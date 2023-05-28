@@ -29,6 +29,29 @@ def resample_density(p,grid,X):
     pdot[:,1:-1]-=dpXdy[:,1:]
     return p+pdot
 
+
+
+def resample_density_periodic(p,grid,X):
+    """
+    This function calculates an updated density p using the continuity equation pdot = -div p*X.
+    In this updating the boundary is assumed to be periodic.
+
+    p: Tensor (1, 1, m, m) where m is the width of the grid:  The density before the update
+    grid: Tensor (1, m, m, 2): The array of grid points
+    X: Tensor (m, m, 2): The vector field on the grid
+
+    The sizes of Tensors are this way because we want to use grid_sample in the load_dist function.
+    """
+    m=grid.shape[1]
+    pm=p[0, 0] #pm: Tensor (m,m): the density matrix before the update
+    pX= pm*X.transpose(0,2) 
+    pdot=torch.zeros(m,m).to(dtype=torchdtype, device=torchdeviceId)
+    dpXdx=pX[0].diff(prepend=pX[0,-1,:].reshape(1,-1), dim=0)   # prepend the last column to account for the periodicity
+    dpXdy=pX[1].diff(prepend=pX[1,:,-1:], dim=1)
+    pdot-=dpXdx
+    pdot-=dpXdy    
+    return p+pdot
+
 def upsampleT(vecs,N):
     N0=vecs.shape[0]
     xp=np.linspace(0,1,N0,endpoint=True)

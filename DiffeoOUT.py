@@ -17,17 +17,18 @@ def enr_OUT(source,target,grid,match_coeff,path_coeff,inner_prod,delta):
         for i in range(0,vecs.shape[0]):
             X=vecs[i]
             f=funs[i]
-            path_enr += inner_prod(X,source,p,grid)/2 + (delta**2)*(f[:,:,0]**2/p[0,0]).sum()/2
-            p=resample_density(p,grid,X)+f[:,:,0]
+            path_enr += inner_prod(X,source,p,grid)/2 + (delta**2/2)*(f[:,:,0]**2/p[0,0]).sum()
+            p=resample_density(p,grid,X,vecs.shape[0]-1)+f[:,:,0]
         return path_coeff*path_enr + match_coeff*L2_error(p,target)
     return energy
     
-def path_length(source,vecs,funs,grid,inner_prod,delta):    
+def path_length(source,vecs,funs,grid,inner_prod,delta): 
+    m=grid.shape[1]
     path_enr=[]
     p=source
     for i in range(1,vecs.shape[0]):
-        path_enr += [(inner_prod(vecs[i],source,p,grid)/2 + (delta**2)*(funs[i,:,:,0]**2/p[0,0]).sum()/2).sqrt().item()]
-        p=resample_density(p,grid,vecs[i])+funs[i,:,:,0]
+        path_enr += [(inner_prod(vecs[i],source,p,grid)/2 + (delta**2/2)*(funs[i,:,:,0]**2/p[0,0]).sum()).sqrt().item()]
+        p=resample_density(p,grid,vecs[i],vecs.shape[0]-1)+funs[i,:,:,0]
     return np.array(path_enr)    
     
 def DiffeoOUT(mu_1,mu_2,grid,T,match_coeff,path_coeff,vecs,funs,inner_prod,delta,max_iter=10000):

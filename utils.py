@@ -18,7 +18,8 @@ def gaussian(a,b,G,grid):
     mu=mu/mu.sum()
     return mu.reshape(1,1,m,m).to(dtype=torchdtype, device=torchdeviceId)
 
-def resample_density(p,grid,X):
+def resample_density(p,grid,X,N):
+    X=X/N
     m=grid.shape[1]
     pm=p[0,0]
     pX= pm*X.transpose(0,2)
@@ -27,29 +28,6 @@ def resample_density(p,grid,X):
     dpXdy=pX[1].diff(dim=1)
     pdot[1:-1]-=dpXdx[1:]
     pdot[:,1:-1]-=dpXdy[:,1:]
-    return p+pdot
-
-
-
-def resample_density_periodic(p,grid,X):
-    """
-    This function calculates an updated density p using the continuity equation pdot = -div p*X.
-    In this updating the boundary is assumed to be periodic.
-
-    p: Tensor (1, 1, m, m) where m is the width of the grid:  The density before the update
-    grid: Tensor (1, m, m, 2): The array of grid points
-    X: Tensor (m, m, 2): The vector field on the grid
-
-    The sizes of Tensors are this way because we want to use grid_sample in the load_dist function.
-    """
-    m=grid.shape[1]
-    pm=p[0, 0] #pm: Tensor (m,m): the density matrix before the update
-    pX= pm*X.transpose(0,2) 
-    pdot=torch.zeros(m,m).to(dtype=torchdtype, device=torchdeviceId)
-    dpXdx=pX[0].diff(prepend=pX[0,-1,:].reshape(1,-1), dim=0)   # prepend the last column to account for the periodicity
-    dpXdy=pX[1].diff(prepend=pX[1,:,-1:], dim=1)
-    pdot-=dpXdx
-    pdot-=dpXdy    
     return p+pdot
 
 def upsampleT(vecs,N):
@@ -86,7 +64,7 @@ def make_and_plot_sequence(mu_1,mu_2,vecs, grid):
         axes[2*i-1].quiver(grid[0,:,:,0].cpu(),grid[0,:,:,1].cpu(),-(1/T-1)*X[:,:,0].cpu(),-(1/T-1)*X[:,:,1].cpu())
         axes[2*i-1].set_xlim([-1, 1])
         axes[2*i-1].set_ylim([-1, 1])
-        p=resample_density(p,grid,X)
+        p=resample_density(p,grid,X,T-1)
         ls+=[p.cpu().numpy()]
         axes[2*i].pcolormesh(grid[0,:,:,0].cpu(),grid[0,:,:,1].cpu(), p[0,0].transpose(0,1).cpu(), vmin=0, vmax=vmax)
         axes[2*i].set_xlim([-1, 1])
@@ -109,7 +87,7 @@ def make_and_plot_sequence_u(mu_1,mu_2,vecs,funs, grid):
         axes[2*i-1].quiver(grid[0,:,:,0].cpu(),grid[0,:,:,1].cpu(),-(1/T-1)*X[:,:,0].cpu(),-(1/T-1)*X[:,:,1].cpu())
         axes[2*i-1].set_xlim([-1, 1])
         axes[2*i-1].set_ylim([-1, 1])
-        p=resample_density(p,grid,X)+funs[i,:,:,0]
+        p=resample_density(p,grid,X,T-1)+funs[i,:,:,0]
         ls+=[p.cpu().numpy()]
         axes[2*i].pcolormesh(grid[0,:,:,0].cpu(),grid[0,:,:,1].cpu(), p[0,0].transpose(0,1).cpu(), vmin=0, vmax=vmax)
         axes[2*i].set_xlim([-1, 1])
@@ -131,8 +109,11 @@ def save_gif(mu_1,mu_2,ls, filename="array.gif"):
 def load_dist(file_name,grid):
     im = Image.open(file_name)
     im = im.convert("L")
-    pix = 300-np.array(im.getdata()).reshape(1,1,im.size[0], im.size[1])
+    pix = 280-np.array(im.getdata()).reshape(1,1,im.size[0], im.size[1])
     mu=tnn.grid_sample(torch.from_numpy(pix).to(dtype=torchdtype, device=torchdeviceId), grid)
     mu=mu/mu.sum()
     mu=mu.transpose(2,3)
     return mu
+
+def normalize(mu):
+    return mu/mu.sum()

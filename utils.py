@@ -30,6 +30,13 @@ def resample_density(p,grid,X,N):
     pdot[:,1:-1]-=dpXdy[:,1:]
     return p+pdot
 
+def resample_densityS1(p,grid,X,N):
+    X=X/N
+    m=grid.shape[1]
+    pX= p*X
+    pdot=torch.diff(pX,prepend=pX[-1:m],dim=0)
+    return p-pdot
+
 def upsampleT(vecs,N):
     N0=vecs.shape[0]
     xp=np.linspace(0,1,N0,endpoint=True)
@@ -69,6 +76,50 @@ def make_and_plot_sequence(mu_1,mu_2,vecs, grid):
         axes[2*i].pcolormesh(grid[0,:,:,0].cpu(),grid[0,:,:,1].cpu(), p[0,0].transpose(0,1).cpu(), vmin=0, vmax=vmax)
         axes[2*i].set_xlim([-1, 1])
         axes[2*i].set_ylim([-1, 1])
+    plt.show()
+    return ls
+
+def make_and_plot_sequenceS1(mu_1,mu_2,vecs, grid):
+    vmax= 1.2*max(mu_1.max(),mu_2.max()).item()
+    m=grid.shape[1]
+    p=mu_1
+    ls=[p.cpu().numpy()]
+    T=vecs.shape[0]
+    fig, axes = plt.subplots(ncols=T, figsize=(10*T, 10))
+    axes[0].plot(p.cpu())
+    axes[0].set_xlim([0, m-1])
+    axes[0].set_ylim([0, vmax])
+    for i in range(1,vecs.shape[0]):
+        X=vecs[i]
+        p=resample_densityS1(p,grid,X,T-1)
+        ls+=[p.cpu().numpy()]
+        axes[i].plot(p.cpu())
+        axes[i].set_xlim([0, m-1])
+        axes[i].set_ylim([0, vmax])
+    
+    axes[i].plot(mu_2.cpu())
+    plt.show()
+    return ls
+
+def make_and_plot_sequenceS1_c(mu_1,mu_2,vecs, grid):
+    vmax= 1.2*max(mu_1.max(),mu_2.max()).item()
+    m=grid.shape[1]
+    p=mu_1
+    ls=[p.cpu().numpy()]
+    T=vecs.shape[0]
+    fig, axes = plt.subplots(ncols=T, figsize=(10*T, 10))
+    axes[0].plot((p*grid[0]).cpu(),(p*grid[1]).cpu())
+    axes[0].set_xlim([-1*vmax, vmax])
+    axes[0].set_ylim([-1*vmax, vmax])
+    for i in range(1,vecs.shape[0]):
+        X=vecs[i]
+        p=resample_densityS1(p,grid,X,T-1)
+        ls+=[p.cpu().numpy()]
+        axes[i].plot((p*grid[0]).cpu(),(p*grid[1]).cpu())
+        axes[i].set_xlim([-1*vmax, vmax])
+        axes[i].set_ylim([-1*vmax, vmax])
+    
+    axes[i].plot((mu_2*grid[0]).cpu(),(mu_2*grid[1]).cpu())
     plt.show()
     return ls
 

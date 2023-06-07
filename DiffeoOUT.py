@@ -28,7 +28,7 @@ def path_length(source,vecs,funs,grid,inner_prod,delta):
     p=source
     for i in range(1,vecs.shape[0]):
         path_enr += [(inner_prod(vecs[i],source,p,grid)/2 + (delta**2/2)*(funs[i,:,:,0]**2/p[0,0]).sum()).sqrt().item()]
-        p=resample_density(p,grid,vecs[i],vecs.shape[0]-1)+funs[i,:,:,0]
+        p=resample_density(p,grid,vecs[i],vecs.shape[0])+funs[i,:,:,0]
     return np.array(path_enr)    
     
 def DiffeoOUT(mu_1,mu_2,grid,T,match_coeff,path_coeff,vecs,funs,inner_prod,delta,max_iter=10000):

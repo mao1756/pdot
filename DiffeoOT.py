@@ -17,7 +17,7 @@ def enr_OT(source,target,grid,match_coeff,path_coeff,inner_prod):
         for i in range(0,vecs.shape[0]):
             X=vecs[i]
             path_enr += inner_prod(X,source,p,grid)
-            p=resample_density(p,grid,X,vecs.shape[0]-1)
+            p=resample_density(p,grid,X,vecs.shape[0])
         return path_coeff*path_enr + match_coeff*L2_error(p,target)
     return energy
     
@@ -26,7 +26,7 @@ def path_length(source,vecs,grid,inner_prod):
     p=source
     for i in range(1,vecs.shape[0]):
         path_enr += [inner_prod(vecs[i],source,p,grid).sqrt().item()]
-        p=resample_density(p,grid,vecs[i],vecs.shape[0]-1)
+        p=resample_density(p,grid,vecs[i],vecs.shape[0])
     return np.array(path_enr)    
     
 def DiffeoOT(mu_1,mu_2,grid,T,match_coeff,path_coeff,vecs,inner_prod,max_iter=10000):

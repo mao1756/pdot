@@ -108,18 +108,24 @@ def make_and_plot_sequenceS1_c(mu_1,mu_2,vecs, grid):
     ls=[p.cpu().numpy()]
     T=vecs.shape[0]
     fig, axes = plt.subplots(ncols=T, figsize=(10*T, 10))
-    axes[0].plot((torch.cumsum(p*grid[0],dim=0)).cpu(),(torch.cumsum(p*grid[1],dim=0)).cpu())
+    x=torch.cat([torch.zeros(1),torch.cumsum(p*grid[0],dim=0)],dim=0)
+    y=torch.cat([torch.zeros(1),torch.cumsum(p*grid[1],dim=0)],dim=0)
+    axes[0].plot(x.cpu(),y.cpu())
     axes[0].set_xlim([-1*vmax, vmax])
     axes[0].set_ylim([-1*vmax, vmax])
     for i in range(1,vecs.shape[0]):
         X=vecs[i]
         p=resample_densityS1(p,grid,X,T-1)
         ls+=[p.cpu().numpy()]
-        axes[i].plot((torch.cumsum(p*grid[0],dim=0)).cpu(),(torch.cumsum(p*grid[1],dim=0)).cpu())
+        x=torch.cat([torch.zeros(1),torch.cumsum(p*grid[0],dim=0)],dim=0)
+        y=torch.cat([torch.zeros(1),torch.cumsum(p*grid[1],dim=0)],dim=0)
+        axes[i].plot(x.cpu(),y.cpu())
         axes[i].set_xlim([-1*vmax, vmax])
         axes[i].set_ylim([-1*vmax, vmax])
     
-    axes[i].plot((torch.cumsum(mu_2*grid[0],dim=0)).cpu(),(torch.cumsum(mu_2*grid[1],dim=0)).cpu())
+    x=torch.cat([torch.zeros(1),torch.cumsum(mu_2*grid[0],dim=0)],dim=0)
+    y=torch.cat([torch.zeros(1),torch.cumsum(mu_2*grid[1],dim=0)],dim=0)
+    axes[i].plot(x.cpu(),y.cpu())
     plt.show()
     return ls
 

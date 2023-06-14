@@ -17,8 +17,6 @@ def batchDot(dv1,dv2):
 
 def loadMesh(file_name): 
     mesh = o3d.io.read_triangle_mesh(file_name)
-    mesh = mesh.subdivide_midpoint(number_of_iterations=2)
-    #mesh = mesh.simplify_quadric_decimation(120)
     V = torch.from_numpy(np.asarray(mesh.vertices, dtype=np.float64)).to(dtype=torchdtype,device=torchdeviceId) 
     F = torch.from_numpy(np.asarray(mesh.triangles, np.int64)).to(device=torchdeviceId)  
     color=np.zeros((int(V.shape[0]),0))

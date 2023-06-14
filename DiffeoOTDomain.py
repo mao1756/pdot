@@ -4,8 +4,8 @@ from DiffeoOT import *
 
 class Domain(abc.ABC):
     #d is the dimension of the tangent vectors used in the OT computation
-    #n is the number of vectors (it may not be the same as the number of supports of the measure)
-    #m is the number of supports
+    #m is the number of vectors (it may not be the same as the number of supports of the measure)
+    #n is the number of supports
     def __init__(self,d,m,n,vols):
         self.m=m
         self.n=n

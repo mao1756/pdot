@@ -1,5 +1,6 @@
 import torch
-import torchdiffeq
+
+# import torchdiffeq
 
 
 def WFR_energy(p: torch.Tensor, v: torch.Tensor, z: torch.Tensor):
@@ -20,7 +21,8 @@ def WFR_energy(p: torch.Tensor, v: torch.Tensor, z: torch.Tensor):
 def dynamic_wfr_relaxed_unconstrained_grid(
     p1: torch.Tensor, p2: torch.Tensor, rel: float, dx: list, dt: float
 ):
-    """Calculates the Wasserstein-Fisher-Rao distance between two (discretized) measures defined on a rectangular grid.
+    """Calculates the Wasserstein-Fisher-Rao distance between two (discretized)
+    measures defined on a rectangular grid.
 
     Args:
         p1, p2: torch.Tensor

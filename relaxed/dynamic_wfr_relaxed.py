@@ -2,24 +2,99 @@ import torch
 
 # import torchdiffeq
 
+# ToDo: fix the bug when t is close to 0: time_step_num becomes -1
+# Also think about the grid size in T: should it be T+1 or just T?
+# I think it should be T+1 (i=0,,...,T, t=i/T). In this case we need to rewrite the
+# code.
 
-def WFR_energy(p: torch.Tensor, v: torch.Tensor, z: torch.Tensor):
+
+def _WFR_energy(
+    p: torch.Tensor, v: torch.Tensor, z: torch.Tensor, delta: torch.FloatTensor
+):
     """Calculates the Wasserstein-Fisher-Rao energy for the path (p, v, z).
 
-    This function calculates the WFR energy or D_delta(mu) in the original paper by
-    (1/2)Σ(p|v|²+δ²pz²)dxdt
+    This function calculates the (scaled) WFR energy or D_delta(mu) in the original
+    paper by Σ(p|v|²+δ²pz²)
 
     Args:
         p: torch.Tensor of size (T, N1, N2, ..., N_n)
             The mass distribution over time.
         v: torch.Tensor of size (T, N1, N2, ..., N_n, n)
             The velocity field over time.
-        z: (T, N1, N2, ..., N_n)
+        z: torch. Tensor of size (T, N1, N2, ..., N_n)
+            The source function over time.
+        delta: the interpolation parameter for WFR.
+
+    Returns:
+        wfr: torch.FloatTensor of size (1,)
+            The scaled Wasserstein-Fisher-Rao energy.
     """
+    if p.shape != v.shape[:-1] or p.shape != z.shape or v.shape[:-1] != z.shape:
+        raise TypeError("p.shape, v.shape[:-1] and z.shape should all match")
+
+    if len(v.shape) - 2 != v.shape[-1]:
+        raise TypeError(
+            "The dimension of the grid and the dimension of the vector does not match"
+        )
+
+    v_norm = torch.norm(v, dim=-1)
+    wfr = torch.sum(p * v_norm**2 + delta**2 * p * z**2)
+
+    return wfr
 
 
-def dynamic_wfr_relaxed_unconstrained_grid(
-    p1: torch.Tensor, p2: torch.Tensor, rel: float, dx: list, dt: float
+def _div_plus_pz_grid(
+    t: float, p: torch.Tensor, v: torch.Tensor, z: torch.Tensor, dx: list, T: int
+):
+    """Calculates -div(pv)+pz given p, v and z where div is the Euclidean divergence.
+
+    t: float
+        The time to evaluate.
+
+    p: torch.Tensor of shape (N1, N2, ..., N_n)
+        The mass distribution at time t.
+
+    v: torch.Tensor of shape (T, N1, N2, ..., N_n, n)
+        The vector field for all time.
+
+    z: torch.Tensor of shape (T, N1, N2, ..., N_n)
+        The source function for all time.
+
+    dx: list of floats
+            The step size in each spatial direction for the grid.
+    T: int
+        The grid size in time. The step size in time is defined by 1/T.
+    """
+    time_step_num = round(t * T) - 1
+    spatial_dim = len(dx)
+
+    # pre_div represents the list of (pv_i(...x_i+dx_i...)-p_i(...x_i-dx_i...))/2dx_i
+    # in each dimension i.e. a numerical approximation of
+    # (∂pv_1/∂x1, ∂pv_2/∂x2, ..., ∂pv_n/∂xn)
+    pre_div = [
+        (
+            torch.roll(p.reshape(-1, 1) * v[time_step_num, ..., i], -1, i)
+            - torch.roll(p.reshape(-1, 1) * v[time_step_num, ..., i], 1, i)
+        )
+        / (2 * dx[i])
+        for i in range(spatial_dim)
+    ]
+
+    divpv = sum(pre_div)
+
+    return -divpv + p * z[time_step_num]
+
+
+def dynamic_wfr_relaxed_grid(
+    p1: torch.Tensor,
+    p2: torch.Tensor,
+    delta: float,
+    rel: float,
+    dx: list,
+    T: float,
+    num_iter: int,
+    optim_class: torch.optim.Optimizer = torch.optim.LBFGS,
+    **optim_params
 ):
     """Calculates the Wasserstein-Fisher-Rao distance between two (discretized)
     measures defined on a rectangular grid.
@@ -29,6 +104,9 @@ def dynamic_wfr_relaxed_unconstrained_grid(
             The discretized measures to calculate the distance.
             The size of p1 and p2 implicitly defines the size of the grid.
 
+        delta: float
+            The interpolation parameter for WFR.
+
         rel: float
             The relaxation constant.
 
@@ -36,10 +114,46 @@ def dynamic_wfr_relaxed_unconstrained_grid(
             The step size in each spatial direction for the grid.
             The number of elements should match the number of dimensions of p1, p2.
 
-        dt: float
-            The step size in time.
+        T: int
+            The grid size in time. The step size in time is defined by 1/T.
+
+        num_iter: int
+            The number of iterations.
+
+        optim_class: torch.optim.Optimizer
+            The optimizer used for minimization of the energy.
+
+        **optim_params
+            The parameters to be passed to the optimizer.
 
     Returns:
-        WFR: torch.FloatTensor
+        WFR_distance: torch.FloatTensor
             The Waserstein-Fisher-Rao distance between p1 and p2.
     """
+
+    if p1.shape != p2.shape:
+        raise TypeError("The shape of p1 and p2 should match")
+
+    if rel <= 0:
+        raise ValueError("The relaxation constant should be positive")
+
+    if len(dx) != len(p1.shape):
+        raise TypeError("The spatial dimension of dx and p1, p2 should match")
+
+    spatial_dim = len(p1.shape)
+    v_shape = (T,) + p1.shape + (spatial_dim,)
+    z_shape = (T,) + p1.shape
+
+    # Initialization of v and z
+    v = torch.zeros(v_shape, requires_grad=True)
+    z = torch.zeros(z_shape, requires_grad=True)
+
+    # Initialize the optimizer
+    optimizer = optim_class([v, z], **optim_params)
+
+    for _ in range(num_iter):
+        optimizer.zero_grad()
+
+        # Use v and z to solve the continuity equation
+
+    return None

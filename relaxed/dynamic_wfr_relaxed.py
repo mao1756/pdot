@@ -1,11 +1,11 @@
 import torch
-
-# import torchdiffeq
+import torchdiffeq
+import functools
 
 # ToDo: fix the bug when t is close to 0: time_step_num becomes -1
 # Also think about the grid size in T: should it be T+1 or just T?
-# I think it should be T+1 (i=0,,...,T, t=i/T). In this case we need to rewrite the
-# code.
+# I think it should be T+1 (i=0,,...,T, t=i/T). In this case we need to
+# rewrite the  code.
 
 
 def _WFR_energy(
@@ -13,8 +13,8 @@ def _WFR_energy(
 ):
     """Calculates the Wasserstein-Fisher-Rao energy for the path (p, v, z).
 
-    This function calculates the (scaled) WFR energy or D_delta(mu) in the original
-    paper by Σ(p|v|²+δ²pz²)
+    This function calculates the (scaled) WFR energy or D_delta(mu) in the
+    original paper by Σ(p|v|²+δ²pz²)
 
     Args:
         p: torch.Tensor of size (T, N1, N2, ..., N_n)
@@ -29,12 +29,14 @@ def _WFR_energy(
         wfr: torch.FloatTensor of size (1,)
             The scaled Wasserstein-Fisher-Rao energy.
     """
+
+    # ToDo: Comment out the input check once everything works
     if p.shape != v.shape[:-1] or p.shape != z.shape or v.shape[:-1] != z.shape:
         raise TypeError("p.shape, v.shape[:-1] and z.shape should all match")
 
     if len(v.shape) - 2 != v.shape[-1]:
         raise TypeError(
-            "The dimension of the grid and the dimension of the vector does not match"
+           "The dimension of the grid and the dimension of the vector does not match"
         )
 
     v_norm = torch.norm(v, dim=-1)
@@ -65,16 +67,22 @@ def _div_plus_pz_grid(
     T: int
         The grid size in time. The step size in time is defined by 1/T.
     """
-    time_step_num = round(t * T) - 1
+    # For a given t, this code finds the index of the closest discretization points
+    # i/T where i = 0,...,T-1. We use the vector field at the closest point as the
+    # value at t.
+    time_step_num = round(t * T)
+    time_step_num = min(time_step_num, T-1)  # avoid rounding to t=T
+
     spatial_dim = len(dx)
 
-    # pre_div represents the list of (pv_i(...x_i+dx_i...)-p_i(...x_i-dx_i...))/2dx_i
+    # pre_div represents the list of (pv_i(t, ...x_i+dx_i...)-pv_i(t, ...x_i-dx_i...))
+    # /2dx_i
     # in each dimension i.e. a numerical approximation of
     # (∂pv_1/∂x1, ∂pv_2/∂x2, ..., ∂pv_n/∂xn)
     pre_div = [
         (
-            torch.roll(p.reshape(-1, 1) * v[time_step_num, ..., i], -1, i)
-            - torch.roll(p.reshape(-1, 1) * v[time_step_num, ..., i], 1, i)
+            torch.roll(p * v[time_step_num, ..., i], -1, i)
+            - torch.roll(p * v[time_step_num, ..., i], 1, i)
         )
         / (2 * dx[i])
         for i in range(spatial_dim)
@@ -93,6 +101,7 @@ def dynamic_wfr_relaxed_grid(
     dx: list,
     T: float,
     num_iter: int,
+    solver: str = 'euler',
     optim_class: torch.optim.Optimizer = torch.optim.LBFGS,
     **optim_params
 ):
@@ -120,7 +129,10 @@ def dynamic_wfr_relaxed_grid(
         num_iter: int
             The number of iterations.
 
-        optim_class: torch.optim.Optimizer
+        solver: str, default = 'euler'
+            The ODE solver used for torchdiffeq.
+
+        optim_class: torch.optim.Optimizer, default = torch.optim.LBFGS
             The optimizer used for minimization of the energy.
 
         **optim_params
@@ -154,6 +166,18 @@ def dynamic_wfr_relaxed_grid(
     for _ in range(num_iter):
         optimizer.zero_grad()
 
-        # Use v and z to solve the continuity equation
+        # Solve the continuity equation
+        divpz = functools.partial(_div_plus_pz_grid, v=v, z=z, dx=dx, T=T)
+        p = torchdiffeq.odeint(divpz, p1, torch.arange(0, 1. + 1./T, 1./T),
+                               method=solver)
 
-    return None
+        # Find the loss
+        loss = _WFR_energy(p[:-1], v, z, delta) + rel*torch.norm(p[-1]-p2)
+        loss.backward()
+        optimizer.step()
+
+    p = torchdiffeq.odeint(divpz, p1, torch.arange(0, 1. + 1./T, 1./T),
+                           method=solver).detach()
+    wfr = torch.sqrt(_WFR_energy(p[:-1], v, z, delta)).detach()
+
+    return wfr, p, v, z

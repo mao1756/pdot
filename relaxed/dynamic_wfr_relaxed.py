@@ -1,12 +1,9 @@
 import torch
 import torchdiffeq
+import numpy as np
+import scipy as sp
 import functools
 import math
-
-# ToDo: fix the bug when t is close to 0: time_step_num becomes -1
-# Also think about the grid size in T: should it be T+1 or just T?
-# I think it should be T+1 (i=0,,...,T, t=i/T). In this case we need to
-# rewrite the  code.
 
 
 def _WFR_energy(
@@ -18,12 +15,12 @@ def _WFR_energy(
     original paper by Σ(p|v|²+δ²pz²)
 
     Args:
-        p: torch.Tensor of size (T, N1, N2, ..., N_n)
-            The mass distribution over time.
-        v: torch.Tensor of size (T, N1, N2, ..., N_n, n)
-            The velocity field over time.
-        z: torch. Tensor of size (T, N1, N2, ..., N_n)
-            The source function over time.
+        p (torch.Tensor of size (T, N1, N2, ..., N_n)): The mass distribution over time.
+
+        v (torch.Tensor of size (T, N1, N2, ..., N_n, n)): The velocity field over time.
+
+        z (torch. Tensor of size (T, N1, N2, ..., N_n))): The source function over time.
+
         delta: the interpolation parameter for WFR.
 
     Returns:
@@ -37,7 +34,7 @@ def _WFR_energy(
 
     if len(v.shape) - 2 != v.shape[-1]:
         raise TypeError(
-           "The dimension of the grid and the dimension of the vector does not match"
+            "The dimension of the grid and the dimension of the vector does not match"
         )
 
     v_norm = torch.norm(v, dim=-1)
@@ -47,8 +44,7 @@ def _WFR_energy(
 
 
 def _div_plus_pz_grid(
-    t: torch.Tensor, p: torch.Tensor, v: torch.Tensor, z: torch.Tensor, dx: list,
-    T: int
+    t: torch.Tensor, p: torch.Tensor, v: torch.Tensor, z: torch.Tensor, dx: list, T: int
 ):
     """Calculates -div(pv)+pz given p, v and z where div is the Euclidean divergence.
 
@@ -69,12 +65,12 @@ def _div_plus_pz_grid(
     T: int
         The grid size in time. The step size in time is defined by 1/T.
     """
-    # For a given t, this code finds the index of the closest discretization points
-    # i/T where i = 0,...,T-1. We use the vector field at the closest point as the
+    # For a given t, the following lines finds the index of the closest discretization
+    # points i/T where i = 0,...,T-1. We use the vector field at the closest point as the
     # value at t.
 
     time_step_num = torch.round(t * T).int()
-    time_step_num = min(time_step_num, T-1)  # avoid rounding to t=T
+    time_step_num = min(time_step_num, T - 1)  # avoid rounding to t=T
 
     spatial_dim = len(dx)
 
@@ -106,54 +102,58 @@ def dynamic_wfr_relaxed_grid(
     atol: float = 1e-8,
     rtol: float = 1e-5,
     num_iter: int = 1000,
-    solver: str = 'euler',
+    solver: str = "euler",
     optim_class: torch.optim.Optimizer = torch.optim.SGD,
     **optim_params
 ):
     """Calculates the Wasserstein-Fisher-Rao distance between two (discretized)
     measures defined on a rectangular grid.
+    The difference between the `dynamic_wfr_relaxed_grid` function is that we use
+    the scipy optimizer for optimization. We still use PyTorch for gradient
+    calculation.
 
     Args:
-        p1, p2: torch.Tensor
-            The discretized measures to calculate the distance.
-            The size of p1 and p2 implicitly defines the size of the grid.
+        p1 (torch.Tensor): The discretized measure to calculate the distance between \
+        p2. The size of p1 and p2 implicitly defines the shape of the grid.
 
-        delta: float
-            The interpolation parameter for WFR.
+        p1 (torch.Tensor): The discretized measure to calculate the distance between \
+        p2. The size of p1 and p2 implicitly defines the shape of the grid.
 
-        rel: float
-            The relaxation constant.
+        delta (float): The interpolation parameter for WFR.
 
-        T: int
-            The grid size in time. The step size in time is defined by 1/T.
+        rel (float): The relaxation constant.
 
-        dx: list of float, default = None
-            The step size in each spatial direction for the grid.
-            The number of elements should match the number of dimensions of p1, p2.
-            if none, dx = [1/N_1, ..., 1/N_n] where (N_1, ..., N_n) is the shape of
-            p1,p2.
+        T (int):  The grid size in time. The step size in time is defined by 1/T.
 
-        atol: float, default = 1e-8
-            The absolute tolerance for convergence check.
+        dx (list of floats), default = None: The step size in each spatial direction \
+            for the grid. The number of elements should match the number of \
+            dimensions of p1, p2. if None, dx = [1/N_1, ..., 1/N_n] where \
+            (N_1, ..., N_n) is the shape of p1,p2.
 
-        rtol: float, default = 1e-5
-            The relative tolerance for convergence check.
+        atol (float), default = 1e-8: The absolute tolerance for convergence check.
 
-        num_iter: int, default = 1000
-            The number of iterations.
+        rtol (float), default = 1e-5: The relative tolerance for convergence check.
 
-        solver: str, default = 'euler'
-            The ODE solver used for torchdiffeq.
+        num_iter (int), default = 1000: The number of iterations.
 
-        optim_class: torch.optim.Optimizer, default = torch.optim.LBFGS
-            The optimizer used for minimization of the energy.
+        solver (str), default = 'euler': The ODE solver used for torchdiffeq.
 
-        **optim_params
-            The parameters to be passed to the optimizer.
+        optim_class (torch.optim.Optimizer), default = 'torch.optim.SGD': The scipy \
+              optimizer to use. Currently, only `lbfgs` is supported.
+        
+        **optim_params: The parameters to be passed to the optimizer.
 
     Returns:
-        WFR_distance: torch.FloatTensor
-            The Waserstein-Fisher-Rao distance between p1 and p2.
+        wfr (torch.FloatTensor): The Waserstein-Fisher-Rao distance between p1 and p2.
+
+        p (torch.Tensor of shape (T+1, N_1,...., N_n)): The interpolated measures at \
+            each time. p[i] is the measure at time t=i/T.
+
+        v (torch.Tensor of shape (T, N_1,...., N_n, n)): The velocity vector field at\
+            each time. v[i] is the vector field at time t=i/T.
+
+        z (torch.Tensor of shape (T, N_1,...., N_n)): The source field at\
+            each time. z[i] is the source field at time t=i/T.
     """
 
     if p1.shape != p2.shape:
@@ -163,16 +163,16 @@ def dynamic_wfr_relaxed_grid(
         raise ValueError("The relaxation constant should be positive")
 
     if dx is None:
-        dx = [1./n for n in p1.shape]
+        dx = [1.0 / n for n in p1.shape]
 
     if len(dx) != len(p1.shape):
         raise TypeError("The spatial dimension of dx and p1, p2 should match")
 
     if torch.cuda.is_available():
-        device = 'cuda'
-        print('Using GPU')
+        device = "cuda:0"
+        print("Using GPU")
     else:
-        device = 'cpu'
+        device = "cpu"
 
     spatial_dim = len(p1.shape)
     v_shape = (T,) + p1.shape + (spatial_dim,)
@@ -190,11 +190,12 @@ def dynamic_wfr_relaxed_grid(
 
         # Solve the continuity equation
         divpz = functools.partial(_div_plus_pz_grid, v=v, z=z, dx=dx, T=T)
-        p = torchdiffeq.odeint(divpz, p1, torch.arange(0, 1. + 1./T, 1./T),
-                               method=solver)
+        p = torchdiffeq.odeint(
+            divpz, p1, torch.arange(0, 1.0 + 1.0 / T, 1.0 / T), method=solver
+        )
 
         # Find the loss
-        loss = _WFR_energy(p[:-1], v, z, delta) + rel*torch.norm(p[-1]-p2)
+        loss = _WFR_energy(p[:-1], v, z, delta) + rel * torch.norm(p[-1] - p2)
         loss.backward()
 
         prev_v = v.clone().detach()
@@ -202,15 +203,131 @@ def dynamic_wfr_relaxed_grid(
         optimizer.step()
 
         # Check convergence
-        if torch.allclose(v, prev_v, atol=atol, rtol=rtol) and \
-           torch.allclose(z, prev_z, atol=atol, rtol=rtol):
-            print('Early break at iteration', _)
+        if torch.allclose(v, prev_v, atol=atol, rtol=rtol) and torch.allclose(
+            z, prev_z, atol=atol, rtol=rtol
+        ):
+            print("Early break at iteration", _)
             break
 
-    p = torchdiffeq.odeint(divpz, p1, torch.arange(0, 1. + 1./T, 1./T),
-                           method=solver).detach()
+    p = torchdiffeq.odeint(
+        divpz, p1, torch.arange(0, 1.0 + 1.0 / T, 1.0 / T), method=solver
+    ).detach()
     prod_dx = math.prod(dx)
-    dt = 1./T
-    wfr = torch.sqrt(0.5*_WFR_energy(p[:-1], v, z, delta)*prod_dx*dt).detach()
+    dt = 1.0 / T
+    wfr = torch.sqrt(0.5 * _WFR_energy(p[:-1], v, z, delta) * prod_dx * dt).detach()
 
     return wfr, p, v, z
+
+
+def dynamic_wfr_relaxed_grid_scipy(
+    p1: torch.Tensor,
+    p2: torch.Tensor,
+    delta: float,
+    rel: float,
+    T: float,
+    dx: list[float] = None,
+    atol: float = 1e-8,
+    rtol: float = 1e-5,
+    num_iter: int = 1000,
+    solver: str = "euler",
+    optim: str = "lbfgs",
+    **optim_params
+):
+    """Calculates the Wasserstein-Fisher-Rao distance between two (discretized)
+    measures defined on a rectangular grid.
+    The difference between the `dynamic_wfr_relaxed_grid` function is that we use
+    the scipy optimizer for optimization. We still use PyTorch for gradient
+    calculation.
+
+    The implementation is heavily influenced by Emanuel Hartman's code.
+    The reason why he didn't use PyTorch LBFGS was that he had issues with the line \
+    search, saying that 'it only does only one line search'.
+
+    Args:
+        p1 (torch.Tensor): The discretized measure to calculate the distance between \
+        p2. The size of p1 and p2 implicitly defines the size of the grid.
+
+        p1 (torch.Tensor): The discretized measure to calculate the distance between \
+        p2. The size of p1 and p2 implicitly defines the size of the grid.
+
+        delta (float): The interpolation parameter for WFR.
+
+        rel (float): The relaxation constant.
+
+        T (int):  The grid size in time. The step size in time is defined by 1/T.
+
+        dx (list of floats), default = None: The step size in each spatial direction \
+            for the grid. The number of elements should match the number of \
+            dimensions of p1, p2. if None, dx = [1/N_1, ..., 1/N_n] where \
+            (N_1, ..., N_n) is the shape of p1,p2.
+
+        atol (float), default = 1e-8: The absolute tolerance for convergence check.
+
+        rtol (float), default = 1e-5: The relative tolerance for convergence check.
+
+        num_iter (int), default = 1000: The number of iterations.
+
+        solver (str), default = 'euler': The ODE solver used for torchdiffeq.
+
+        optim (str), default = 'lbfgs': The scipy optimizer to use. \
+            Currently, only `lbfgs` is supported.
+
+    Returns:
+        wfr (torch.FloatTensor): The Waserstein-Fisher-Rao distance between p1 and p2.
+
+        p (torch.Tensor of shape (T+1, N_1,...., N_n)): The interpolated measures at \
+            each time. p[i] is the measure at time t=i/T.
+
+        v (torch.Tensor of shape (T, N_1,...., N_n, n)): The velocity vector field at\
+            each time. v[i] is the vector field at time t=i/T.
+
+        z (torch.Tensor of shape (T, N_1,...., N_n)): The source field at\
+            each time. z[i] is the source field at time t=i/T.
+    """
+
+    if p1.shape != p2.shape:
+        raise TypeError("The shape of p1 and p2 should match")
+
+    if rel <= 0:
+        raise ValueError("The relaxation constant should be positive")
+
+    if dx is None:
+        dx = [1.0 / n for n in p1.shape]
+
+    if len(dx) != len(p1.shape):
+        raise TypeError("The spatial dimension of dx and p1, p2 should match")
+
+    if optim != "lbfgs":
+        raise NotImplementedError("Currently, only lbfgs is supported.")
+
+    spatial_dim = len(p1.shape)
+    v_shape = (T,) + p1.shape + (spatial_dim,)
+    z_shape = (T,) + p1.shape
+
+    # Initialization of v and z
+    v = torch.zeros(v_shape)
+    z = torch.zeros(z_shape)
+    vz = torch.cat([v.flatten(), z.flatten()], dim=0)
+
+    def obj(_vz: np.ndarray):
+        """The objective function for optimization to be passed to the optimizer.
+
+        _vz (np.ndarray): The concatenation of flattened v and z.
+
+        """
+
+        # ToDo: apply constraint here
+        _v = torch.from_numpy(_vz[: len(v_shape)].reshape(v_shape))
+        _z = torch.from_numpy(_vz[len(v_shape) :].reshape(z_shape))
+
+        # Solve the continuity equation
+        divpz = functools.partial(_div_plus_pz_grid, v=_v, z=_z, dx=dx, T=T)
+        _p = torchdiffeq.odeint(
+            divpz, p1, torch.arange(0, 1.0 + 1.0 / T, 1.0 / T), method=solver
+        )
+
+        loss = _WFR_energy(_p[:-1], _v, _z, delta) + rel * torch.norm(_p[-1] - p2)
+        return float(loss.detach().cpu().numpy())
+
+    def grad_obj(_vz: np.ndarray):
+        """The gradient of the objective function at _vz."""

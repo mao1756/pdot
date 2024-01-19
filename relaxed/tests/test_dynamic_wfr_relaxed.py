@@ -128,3 +128,34 @@ def test_div_plus_pz_grid_sintime():
     div = dynamic_wfr_relaxed._div_plus_pz_grid(t, p, v, z, dx, T)
     torch.testing.assert_close(div, torch.cos(xs.squeeze()-t), atol=(2*math.pi/N1)**2
                                + 1./T, rtol=0)
+
+
+"""
+Test of dynamic_wfr_relaxed_grid
+"""
+
+
+def test_dynamic_wfr_relaxed_grid_samedist():
+    # p1=p2=uniform. expected = no error, wfr=0, p=1, v=z=0.
+    p1 = torch.ones(10, 10)
+    p2 = p1
+    delta = 1
+    rel = 1
+    T = 100
+    lr = 1
+    wfr, p, v, z = dynamic_wfr_relaxed.dynamic_wfr_relaxed_grid(
+        p1,
+        p2,
+        delta,
+        rel=rel,
+        T=T,
+        lr=lr
+    )
+    p_objective = torch.ones((T+1, 10, 10))
+    v_objective = torch.zeros((T, 10, 10, 2))
+    z_objective = torch.zeros((T, 10, 10))
+
+    torch.testing.assert_close(wfr, torch.tensor(0.))
+    torch.testing.assert_close(p, p_objective)
+    torch.testing.assert_close(v, v_objective)
+    torch.testing.assert_close(z, z_objective)

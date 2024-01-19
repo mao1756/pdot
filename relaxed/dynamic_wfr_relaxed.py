@@ -70,7 +70,8 @@ def _div_plus_pz_grid(
     # For a given t, this code finds the index of the closest discretization points
     # i/T where i = 0,...,T-1. We use the vector field at the closest point as the
     # value at t.
-    time_step_num = round(t * T)
+
+    time_step_num = torch.round(t * T).int()
     time_step_num = min(time_step_num, T-1)  # avoid rounding to t=T
 
     spatial_dim = len(dx)
@@ -98,11 +99,11 @@ def dynamic_wfr_relaxed_grid(
     p2: torch.Tensor,
     delta: float,
     rel: float,
-    dx: list,
     T: float,
-    num_iter: int,
+    dx: list = None,
+    num_iter: int = 1000,
     solver: str = 'euler',
-    optim_class: torch.optim.Optimizer = torch.optim.LBFGS,
+    optim_class: torch.optim.Optimizer = torch.optim.SGD,
     **optim_params
 ):
     """Calculates the Wasserstein-Fisher-Rao distance between two (discretized)
@@ -119,14 +120,16 @@ def dynamic_wfr_relaxed_grid(
         rel: float
             The relaxation constant.
 
-        dx: list of floats
-            The step size in each spatial direction for the grid.
-            The number of elements should match the number of dimensions of p1, p2.
-
         T: int
             The grid size in time. The step size in time is defined by 1/T.
 
-        num_iter: int
+        dx: list of float, default = None
+            The step size in each spatial direction for the grid.
+            The number of elements should match the number of dimensions of p1, p2.
+            if none, dx = [1/N_1, ..., 1/N_n] where (N_1, ..., N_n) is the shape of
+            p1,p2.
+
+        num_iter: int, default = 1000
             The number of iterations.
 
         solver: str, default = 'euler'
@@ -148,6 +151,9 @@ def dynamic_wfr_relaxed_grid(
 
     if rel <= 0:
         raise ValueError("The relaxation constant should be positive")
+
+    if dx is None:
+        dx = [1./n for n in p1.shape]
 
     if len(dx) != len(p1.shape):
         raise TypeError("The spatial dimension of dx and p1, p2 should match")

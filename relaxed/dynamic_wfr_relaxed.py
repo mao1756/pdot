@@ -101,6 +101,8 @@ def dynamic_wfr_relaxed_grid(
     rel: float,
     T: float,
     dx: list = None,
+    atol: float = 1e-8,
+    rtol: float = 1e-5,
     num_iter: int = 1000,
     solver: str = 'euler',
     optim_class: torch.optim.Optimizer = torch.optim.SGD,
@@ -128,6 +130,10 @@ def dynamic_wfr_relaxed_grid(
             The number of elements should match the number of dimensions of p1, p2.
             if none, dx = [1/N_1, ..., 1/N_n] where (N_1, ..., N_n) is the shape of
             p1,p2.
+        
+        atol: float, default = 1e-5
+            The absolute tolerance for 
+
 
         num_iter: int, default = 1000
             The number of iterations.
@@ -180,7 +186,15 @@ def dynamic_wfr_relaxed_grid(
         # Find the loss
         loss = _WFR_energy(p[:-1], v, z, delta) + rel*torch.norm(p[-1]-p2)
         loss.backward()
+
+        prev_v = v.clone().detach()
+        prev_z = z.clone().detach()
         optimizer.step()
+
+        # Check convergence
+        if torch.allclose(v, prev_v, atol=atol, rtol=rtol) and \
+           torch.allclose(z, prev_z, atol=atol, rtol=rtol):
+            break
 
     p = torchdiffeq.odeint(divpz, p1, torch.arange(0, 1. + 1./T, 1./T),
                            method=solver).detach()

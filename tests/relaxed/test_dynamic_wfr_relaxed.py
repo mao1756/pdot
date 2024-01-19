@@ -1,6 +1,6 @@
 import torch
 import pytest
-import dynamic_wfr_relaxed
+import relaxed.dynamic_wfr_relaxed as dynamic_wfr_relaxed
 import math
 import random
 

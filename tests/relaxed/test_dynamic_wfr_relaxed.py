@@ -82,7 +82,7 @@ Test of _div_plus_pz_grid
 
 def test_div_plus_pz_grid_linear():
     # Tries to calculate the diveregnce of f(x)=x which should be 1
-    t = 0
+    t = torch.tensor(0)
     N1 = 10
     p = -torch.ones(N1)
     v = torch.arange(0, 1., 1./10).reshape(1, -1, 1)
@@ -98,7 +98,7 @@ def test_div_plus_pz_grid_linear():
 def test_div_plus_pz_grid_sin():
     # Tries to calculate the divergence of f(x) = sin(x)
     # This should be cos(x)
-    t = 0
+    t = torch.tensor(0)
     N1 = 20
     p = -torch.ones(N1)
     xs = torch.arange(0, 2*math.pi, 2*math.pi/N1)
@@ -115,7 +115,7 @@ def test_div_plus_pz_grid_sintime():
     # Tries to calculate the divergence of f(x) = sin(x-t) for random t
     # expected: cos(x-t)
     T = 10
-    t = random.random()
+    t = torch.tensor(random.random())
     N1 = 20
     p = -torch.ones(N1)
     xs = torch.arange(0, 2*math.pi, 2*math.pi/N1).reshape(1, -1, 1)

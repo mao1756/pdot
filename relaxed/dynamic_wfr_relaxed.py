@@ -1,6 +1,7 @@
 import torch
 import torchdiffeq
 import functools
+import math
 
 # ToDo: fix the bug when t is close to 0: time_step_num becomes -1
 # Also think about the grid size in T: should it be T+1 or just T?
@@ -46,11 +47,12 @@ def _WFR_energy(
 
 
 def _div_plus_pz_grid(
-    t: float, p: torch.Tensor, v: torch.Tensor, z: torch.Tensor, dx: list, T: int
+    t: torch.Tensor, p: torch.Tensor, v: torch.Tensor, z: torch.Tensor, dx: list,
+    T: int
 ):
     """Calculates -div(pv)+pz given p, v and z where div is the Euclidean divergence.
 
-    t: float
+    t: torch.Tensor of shape (1,)
         The time to evaluate.
 
     p: torch.Tensor of shape (N1, N2, ..., N_n)
@@ -130,10 +132,12 @@ def dynamic_wfr_relaxed_grid(
             The number of elements should match the number of dimensions of p1, p2.
             if none, dx = [1/N_1, ..., 1/N_n] where (N_1, ..., N_n) is the shape of
             p1,p2.
-        
-        atol: float, default = 1e-5
-            The absolute tolerance for 
 
+        atol: float, default = 1e-8
+            The absolute tolerance for convergence check.
+
+        rtol: float, default = 1e-5
+            The relative tolerance for convergence check.
 
         num_iter: int, default = 1000
             The number of iterations.
@@ -164,13 +168,19 @@ def dynamic_wfr_relaxed_grid(
     if len(dx) != len(p1.shape):
         raise TypeError("The spatial dimension of dx and p1, p2 should match")
 
+    if torch.cuda.is_available():
+        device = 'cuda'
+        print('Using GPU')
+    else:
+        device = 'cpu'
+
     spatial_dim = len(p1.shape)
     v_shape = (T,) + p1.shape + (spatial_dim,)
     z_shape = (T,) + p1.shape
 
     # Initialization of v and z
-    v = torch.zeros(v_shape, requires_grad=True)
-    z = torch.zeros(z_shape, requires_grad=True)
+    v = torch.zeros(v_shape, requires_grad=True).to(device)
+    z = torch.zeros(z_shape, requires_grad=True).to(device)
 
     # Initialize the optimizer
     optimizer = optim_class([v, z], **optim_params)
@@ -194,10 +204,13 @@ def dynamic_wfr_relaxed_grid(
         # Check convergence
         if torch.allclose(v, prev_v, atol=atol, rtol=rtol) and \
            torch.allclose(z, prev_z, atol=atol, rtol=rtol):
+            print('Early break at iteration', _)
             break
 
     p = torchdiffeq.odeint(divpz, p1, torch.arange(0, 1. + 1./T, 1./T),
                            method=solver).detach()
-    wfr = torch.sqrt(_WFR_energy(p[:-1], v, z, delta)).detach()
+    prod_dx = math.prod(dx)
+    dt = 1./T
+    wfr = torch.sqrt(0.5*_WFR_energy(p[:-1], v, z, delta)*prod_dx*dt).detach()
 
     return wfr, p, v, z

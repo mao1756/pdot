@@ -315,7 +315,7 @@ def dynamic_wfr_relaxed_grid_scipy(
 
     # If p1, p2 does not have the dtype `float64`, this will create a copy of them.
     # Otherwise, the torch version share the memory with the original.
-    # We make a copy to pass it to torchdiffeq.
+    # We make a torch version to pass it to torchdiffeq.
     p1_torch = torch.from_numpy(p1).to(device=torch_device, dtype=torch.float64)
     p2_torch = torch.from_numpy(p2).to(device=torch_device, dtype=torch.float64)
 

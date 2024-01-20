@@ -10,7 +10,7 @@ We will implement the algorithm to solve this problem and its generalizations.
 
 For now, our main aim is to implement the dynamical formulation of the Wasserstein-Fisher-Rao optimal transport, where we solve the following problem:
 
-$$\begin{align} &\textrm{minimize } \frac{1}{2}\left(\int_{0}^{1}\int_{\mathbb{R}^d}\rho(t,x)\|v(t,x)\|^2dxdt+\delta^2\int_{0}^{1}\int_{\mathbb{R}^d}\rho(t,x)\|z(t,x)\|^2dxdt\right) \\\ &\textrm{subject to } \partial_t \rho + \textrm{div}(\rho v ) = z, \rho(0,x)=\rho_0(x),\rho(1,x)=\rho_1(x)\end{align} \tag*{}$$
+$$\begin{align} &\textrm{minimize } \frac{1}{2}\left(\int_{0}^{1}\int_{\mathbb{R}^d}\rho(t,x)\|v(t,x)\|^2dxdt+\delta^2\int_{0}^{1}\int_{\mathbb{R}^d}\rho(t,x)\|z(t,x)\|^2dxdt\right) \\\ &\textrm{subject to } \partial_t \rho + \textrm{div}(\rho v ) = \rho z, \rho(0,x)=\rho_0(x),\rho(1,x)=\rho_1(x)\end{align} \tag*{}$$
 
 We approach this problem in two ways: the `proximal` algorithm, originally by Chizat et al. (2018), and the `relaxed` algorithm.
 

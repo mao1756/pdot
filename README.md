@@ -2,7 +2,7 @@
 
 The aim of this project is to implement various methods for the dynamic formulation of optimal transport, namely the optimization of the kinetic energy on the space of all solutions on the continuity equation. The most basic dynamic OT problem is the Benamou-Brenier formulation of the Wasserstein distance. Given probability densities $\rho_0(x)$ and $\rho_1(x)$ on $\mathbb{R}^d$, the square of the Wasserstein 2-distance is equal to the solution of the following optimization problem:
 
-$\begin{align} &\textrm{minimize } \int_{0}^{1}\int_{\mathbb{R}^d}\rho(t,x)\|v(t,x)\|^2dxdt \\ \textrm{subject to } \partial_t \rho + \textrm{div}(\rho v ) = 0, \rho(0,x)=\rho_0(x),\rho(1,x)=\rho_1(x)\end{align} \tag*{}$
+$$\begin{align} &\textrm{minimize } \int_{0}^{1}\int_{\mathbb{R}^d}\rho(t,x)\|v(t,x)\|^2dxdt \\ \textrm{subject to } \partial_t \rho + \textrm{div}(\rho v ) = 0, \rho(0,x)=\rho_0(x),\rho(1,x)=\rho_1(x)\end{align} \tag*{}$$
 
 We will implement the algorithm to solve this problem and its generalizations.
 

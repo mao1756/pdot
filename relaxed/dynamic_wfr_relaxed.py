@@ -92,7 +92,7 @@ def _div_plus_pz_grid(
     return -divpv + p * z[time_step_num]
 
 
-def dynamic_wfr_relaxed_grid(
+def wfr_grid(
     p1: torch.Tensor,
     p2: torch.Tensor,
     delta: float,
@@ -156,8 +156,8 @@ def dynamic_wfr_relaxed_grid(
     if p1.shape != p2.shape:
         raise TypeError("The shape of p1 and p2 should match")
 
-    if rel <= 0:
-        raise ValueError("The relaxation constant should be positive")
+    if rel < 0:
+        raise ValueError("The relaxation constant should be nonnegative")
 
     if dx is None:
         dx = [1.0 / n for n in p1.shape]
@@ -219,7 +219,7 @@ def dynamic_wfr_relaxed_grid(
     return wfr, p, v, z
 
 
-def dynamic_wfr_relaxed_grid_scipy(
+def wfr_grid_scipy(
     p1: np.ndarray,
     p2: np.ndarray,
     delta: float,
@@ -230,7 +230,7 @@ def dynamic_wfr_relaxed_grid_scipy(
     solver: str = "euler",
     optim: str = "lbfgs",
     **optim_params
-):
+) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
     """Calculates the Wasserstein-Fisher-Rao distance between two (discretized)
     measures defined on a rectangular periodic grid.
     The difference between the `dynamic_wfr_relaxed_grid` function is that we use
@@ -283,8 +283,8 @@ def dynamic_wfr_relaxed_grid_scipy(
     if p1.shape != p2.shape:
         raise TypeError("The shape of p1 and p2 should match")
 
-    if rel <= 0:
-        raise ValueError("The relaxation constant should be positive")
+    if rel < 0:
+        raise ValueError("The relaxation constant should be nonnegative")
 
     if dx is None:
         dx = [1.0 / n for n in p1.shape]
@@ -379,4 +379,99 @@ def dynamic_wfr_relaxed_grid_scipy(
         0.5 * _WFR_energy(torch_p[:-1], torch_v, torch_z, delta) * prod_dx * dt
     ).numpy()
 
-    return wfr, torch_p.numpy(), v, z
+    return float(wfr), torch_p.numpy(), v, z
+
+
+def wfr_grid_scipy_tunerel(
+    p1: np.ndarray,
+    p2: np.ndarray,
+    delta: float,
+    T: float,
+    rel_start: float = 0.0,
+    rel_stop: float = 10.0,
+    rel_step: float = 1.0,
+    dx: list[float] = None,
+    num_iter: int = 1000,
+    solver: str = "euler",
+    optim: str = "lbfgs",
+    **optim_params
+) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
+    """Run wfr_grid_scipy and automatically tune the relaxation parameter. We gradually \
+    increase the relaxation parameter and stops when the WFR distance reaches plateau. \
+    The iterable for the relaxation parameters is created by np.arange. The tuning\
+    terminates when the latest wfr is lower than the previous.
+
+    Args:
+        p1 (np.ndarray): The discretized measure to calculate the distance between \
+        p2. The size of p1 and p2 implicitly defines the size of the grid.
+
+        p1 (np.ndarray): The discretized measure to calculate the distance between \
+        p2. The size of p1 and p2 implicitly defines the size of the grid.
+
+        delta (float): The interpolation parameter for WFR.
+
+        T (int):  The grid size in time. The step size in time is defined by 1/T.
+
+        rel_start (float): The initial of the relaxation constant.
+
+        rel_stop (float): The last relaxation constant to check.
+
+        rel_step (float): The step of the relaxation parameter.
+
+        dx (list of floats), default = None: The step size in each spatial direction \
+            for the grid. The number of elements should match the number of \
+            dimensions of p1, p2. if None, dx = [1/N_1, ..., 1/N_n] where \
+            (N_1, ..., N_n) is the shape of p1,p2.
+
+        num_iter (int), default = 1000: The maximal number of iterations.
+
+        solver (str), default = 'euler': The ODE solver used for torchdiffeq.
+
+        optim (str), default = 'lbfgs': The scipy optimizer to use. \
+            Currently, only `lbfgs` is supported.
+
+    Returns:
+        wfr (float): The Waserstein-Fisher-Rao distance between p1 and p2 at the \
+        relaxation constant found.
+
+        p (np.ndarray of shape (T+1, N_1,...., N_n)): The interpolated measures at \
+            each time. p[i] is the measure at time t=i/T. (N_1, ..., N_n) is the shape
+            of p1 or p2.
+
+        v (np.ndarray of shape (T, N_1,...., N_n, n)): The velocity vector field at\
+            each time. v[i] is the vector field at time t=i/T.
+
+        z (np.ndarray of shape (T, N_1,...., N_n)): The source field at\
+            each time. z[i] is the source field at time t=i/T.
+
+        best_rel (float) : The relaxation constant found.
+    """
+
+    rels = np.arange(rel_start, rel_stop, rel_step)
+    wfr_prev = 0.0
+
+    if dx is None:
+        dx = [1.0 / n for n in p1.shape]
+
+    for rel in rels:
+        wfr, p, v, z = wfr_grid_scipy(
+            p1, p2, delta, rel, T, dx, num_iter, solver, optim, **optim_params
+        )
+
+        if wfr <= wfr_prev:  # If no longer increasing
+            best_rel = max(rel_start, rel - rel_step)  # Get the previous rel
+            break
+
+        wfr_prev = wfr
+
+    # See if best_rel is undefined
+    try:
+        best_rel
+    except NameError:
+        print(
+            "Did not terminate until the last rel. Try increasing rel_stop and/or\
+             rel_step."
+        )
+        best_rel = rels[-1]
+
+    return wfr, p, v, z, best_rel

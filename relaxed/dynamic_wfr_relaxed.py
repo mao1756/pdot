@@ -43,53 +43,229 @@ def _WFR_energy(p: torch.Tensor, v: torch.Tensor, z: torch.Tensor, delta: float)
     return wfr
 
 
+def _project_affine(
+    p: torch.Tensor,
+    v: torch.Tensor,
+    z: torch.Tensor,
+    H: torch.Tensor,
+    dHdt: torch.Tensor,
+    gradH: list,
+    Fprime: torch.Tensor,
+    dx: list,
+):
+    """Given an unconstrained v and z, returns v and z projected onto the constraint
+    int H(t,x)dp_t = F(t).
+
+    By taking the derivative of both sides of the constraint and applying the continuity \
+    equation, we have
+
+    int (-grad H * v + Hz)pdx = F'-int (dH/dt)pdx
+
+    for all t (We assume some regularity on p, v, z, h and f). This function projects v,z
+    to the affine space defined by the equation above.
+
+    We will see the constraint above as the affine equation
+
+    <c, x> = b
+
+    where c = (c1,c2) = (-p gradH, pH), x = (v, z), b= F'-int (dH/dt)pdx at a given time \
+    and projects x onto this set by
+
+    proj(x) = x - (<c,x>-b)c/|c|^2
+
+    Args:
+        p (torch.Tensor of shape (N_1,...,N_n)) : The density at a given time.
+
+        v (torch.Tensor of shape (N_1,...,N_n, n)) : The velocity field.
+
+        z (torch.Tensor of shape (N_1,...,N_n)) : The source field.
+
+        H (torch.Tensor of shape (N_1,...,N_n)) : The H function. \
+
+        gradH (list of Tensors of shape (N_1,...,N_n)) : The gradient of H. H[i]\
+        is assumed to be the derivative of H function w.r.t. the ith space variable.
+
+        Fprime (torch.Tensor of shape ()) : The derivative of the F function. \
+
+        dx (list of floats) : The list of space steps.
+
+    All of the functions are assumed to be evaluated at the same time.
+    """
+
+    c1 = torch.stack([-p * gradH_component for gradH_component in gradH], dim=-1)
+    c2 = p * H
+    b = Fprime - (dHdt * p).sum() * math.prod(dx)
+
+    cdotx = ((c1 * v).sum() + (c2 * z).sum()) * math.prod(dx)
+    c_norm_sq = (torch.norm(c1) ** 2 + torch.norm(c2) ** 2) * math.prod(dx)
+
+    if c_norm_sq == 0:
+        v_new = v
+        z_new = z
+    else:
+        v_new = v - (cdotx - b) * c1 / c_norm_sq
+        z_new = z - (cdotx - b) * c2 / c_norm_sq
+
+    return v_new, z_new
+
+
+def _batch_project_affine(
+    p: torch.Tensor,
+    v: torch.Tensor,
+    z: torch.Tensor,
+    H: torch.Tensor,
+    dHdt: torch.Tensor,
+    gradH: list,
+    Fprime: torch.Tensor,
+    dx: list,
+):
+    """Given p, v, z at all time, returns the projected v, z at all time. In other words,\
+    we repeatedly apply _proejct_affine for each time.
+
+    Args:
+        p: torch.Tensor of shape (T+1, N1, N2, ..., N_n)
+            The mass distribution at each time.
+
+        v: torch.Tensor of shape (T, N1, N2, ..., N_n, n)
+            The vector field for all time.
+
+        z: torch.Tensor of shape (T, N1, N2, ..., N_n)
+            The source function for all time.
+
+        H (torch.Tensor of shape (T+1, N_1,...,N_n)) : The H funtion in the constraint. \
+        H[i] is H(i/T, x). if any of H,  dHdt, gradH and Fprime is `None`, we assume \
+        there is no constraint.
+
+        dH/dt (torch.Tensor of shape (T+1, N_1,...,N_n)) : The derivative of H function \
+        in the constraint. dHdt[i] is dH/dt at t=i/T. if any of H, dHdt, gradH and Fprime\
+        is `None`, we assume there is no constraint.
+
+        gradH (list of n Tensors of shape (T+1, N_1,....,N_n)): The gradient of the H \
+        function in the constraint. gradH[i][j] is the derivative of H by the ith space\
+        variable evaluated at t=j/T. If any of H, dHdt, gradH and Fprime is\
+        `None`, we assume there is no constraint.
+
+        Fprime (torch.Tensor of shape (T+1)) : The F function in the constraint. F[i] is \
+        F at t=i/T. Fprime[i] is F'(t) at t=i/T. if any of H,  dHdt, gradH and Fprime is\
+        `None`, we assume there is no constraint.
+
+        dx (list of floats) : The space steps in each dimension.
+    """
+
+    new_v = torch.zeros_like(v)
+    new_z = torch.zeros_like(z)
+
+    T = p.shape[0] - 1
+    if all(var is not None for var in [H, dHdt, gradH, Fprime]):
+        for time_step in range(T):
+            new_v[time_step], new_z[time_step] = _project_affine(
+                p[time_step],
+                v[time_step],
+                z[time_step],
+                H[time_step],
+                dHdt[time_step],
+                [component[time_step] for component in gradH],
+                Fprime[time_step],
+                dx,
+            )
+    else:
+        new_v = v
+        new_z = z
+
+    return new_v, new_z
+
+
 def _div_plus_pz_grid(
-    t: torch.Tensor, p: torch.Tensor, v: torch.Tensor, z: torch.Tensor, dx: list, T: int
+    t: torch.Tensor,
+    p: torch.Tensor,
+    v: torch.Tensor,
+    z: torch.Tensor,
+    dx: list,
+    T: int,
+    H: torch.Tensor = None,
+    dHdt: torch.Tensor = None,
+    gradH: list = None,
+    Fprime: torch.Tensor = None,
 ):
     """Calculates -div(pv)+pz given p, v and z where div is the Euclidean divergence.
 
-    t: torch.Tensor of shape (1,)
-        The time to evaluate.
+    Args:
+        t: torch.Tensor of shape (1,)
+            The time to evaluate -div(pv)+pz.
 
-    p: torch.Tensor of shape (N1, N2, ..., N_n)
-        The mass distribution at time t.
+        p: torch.Tensor of shape (N1, N2, ..., N_n)
+            The mass distribution at time t.
 
-    v: torch.Tensor of shape (T, N1, N2, ..., N_n, n)
-        The vector field for all time.
+        v: torch.Tensor of shape (T, N1, N2, ..., N_n, n)
+            The vector field for all time.
 
-    z: torch.Tensor of shape (T, N1, N2, ..., N_n)
-        The source function for all time.
+        z: torch.Tensor of shape (T, N1, N2, ..., N_n)
+            The source function for all time.
 
-    dx: list of floats
-            The step size in each spatial direction for the grid.
-    T: int
-        The grid size in time. The step size in time is defined by 1/T.
+        dx: list of floats
+                The step size in each spatial direction for the grid.
+        T: int
+            The grid size in time. The step size in time is defined by 1/T.
+
+        H (torch.Tensor of shape (T+1, N_1,...,N_n)) : The H funtion in the constraint. \
+        H[i] is H(i/T, x). if any of H,  dHdt, gradH and Fprime is `None`, we assume \
+        there is no constraint.
+
+        dH/dt (torch.Tensor of shape (T+1, N_1,...,N_n)) : The derivative of H function \
+        in the constraint. dHdt[i] is dH/dt at t=i/T. if any of H, dHdt, gradH and Fprime\
+        is `None`, we assume there is no constraint.
+
+        gradH (list of n Tensors of shape (T+1, N_1,....,N_n)): The gradient of the H \
+        function in the constraint. gradH[i][j] is the derivative of H by the ith space\
+        variable evaluated at t=j/T. If any of H, dHdt, gradH and Fprime is\
+        `None`, we assume there is no constraint.
+
+        Fprime (torch.Tensor of shape (T+1)) : The F function in the constraint. F[i] is \
+        F at t=i/T. Fprime[i] is F'(t) at t=i/T. if any of H,  dHdt, gradH and Fprime is\
+        `None`, we assume there is no constraint.
+
+        Returns:
+            torch.Tensor of shape (N1, ..., Nn): -div(pv)+pz at time t.
+
     """
     # For a given t, the following lines finds the index of the closest discretization
-    # points i/T where i = 0,...,T-1. We use the vector field at the closest point as the
-    # value at t.
-
+    # points i/T where i = 0,...,T-1. We use the vector field/source term at the closest
+    # point as the value at t. Basically, we treat the vector field/source term as a
+    # histogram centered at each grid
     time_step_num = torch.round(t * T).int()
     time_step_num = min(time_step_num, T - 1)  # avoid rounding to t=T
 
     spatial_dim = len(dx)
+
+    # Apply the constraint
+    if all(var is not None for var in [H, dHdt, gradH, Fprime]):
+        _v, _z = _project_affine(
+            p,
+            v[time_step_num],
+            z[time_step_num],
+            H[time_step_num],
+            dHdt[time_step_num],
+            [component[time_step_num] for component in gradH],
+            Fprime[time_step_num],
+            dx,
+        )
+    else:
+        _v = v[time_step_num]
+        _z = z[time_step_num]
 
     # pre_div represents the list of (pv_i(t, ...x_i+dx_i...)-pv_i(t, ...x_i-dx_i...))
     # /2dx_i
     # in each dimension i.e. a numerical approximation of
     # (∂pv_1/∂x1, ∂pv_2/∂x2, ..., ∂pv_n/∂xn)
     pre_div = [
-        (
-            torch.roll(p * v[time_step_num, ..., i], -1, i)
-            - torch.roll(p * v[time_step_num, ..., i], 1, i)
-        )
+        (torch.roll(p * _v[..., i], -1, i) - torch.roll(p * _v[..., i], 1, i))
         / (2 * dx[i])
         for i in range(spatial_dim)
     ]
 
     divpv = sum(pre_div)
 
-    return -divpv + p * z[time_step_num]
+    return -divpv + p * _z
 
 
 def wfr_grid(
@@ -104,7 +280,7 @@ def wfr_grid(
     num_iter: int = 1000,
     solver: str = "euler",
     optim_class: torch.optim.Optimizer = torch.optim.SGD,
-    **optim_params
+    **optim_params,
 ):
     """Calculates the Wasserstein-Fisher-Rao distance between two (discretized)
     measures defined on a rectangular periodic grid.
@@ -226,10 +402,12 @@ def wfr_grid_scipy(
     rel: float,
     T: float,
     dx: list[float] = None,
+    H: np.ndarray = None,
+    F: np.ndarray = None,
     num_iter: int = 1000,
     solver: str = "euler",
     optim: str = "lbfgs",
-    **optim_params
+    **optim_params,
 ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
     """Calculates the Wasserstein-Fisher-Rao distance between two (discretized)
     measures defined on a rectangular periodic grid.
@@ -258,6 +436,13 @@ def wfr_grid_scipy(
             for the grid. The number of elements should match the number of \
             dimensions of p1, p2. if None, dx = [1/N_1, ..., 1/N_n] where \
             (N_1, ..., N_n) is the shape of p1,p2.
+
+        H (np.ndarray of shape (T+1, N_1,..,N_n)): The H function in the affine \
+        constraint int H(t,x) dp_t = F(t). (N_1,...,N_n) is the shape of p1, p2. \
+        H[i] corresponds to H(i/T, x).
+
+        F (np.ndarray of shape (T+1,)): The H function in the affine constraint \
+        int H(t,x) dp_t = F(t).  F[i] corresponds to F(i/T).
 
         num_iter (int), default = 1000: The maximal number of iterations.
 
@@ -308,6 +493,39 @@ def wfr_grid_scipy(
     v_shape = (T,) + p1.shape + (spatial_dim,)
     z_shape = (T,) + p1.shape
 
+    # Constraint initialization
+    if H is not None and F is not None:
+        if H.shape[0] != T + 1:
+            raise TypeError("The first dimension of H should be T+1")
+        if H.shape[1:] != p1.shape:
+            raise TypeError("The spatial shape of H does not match p1.shape")
+        if F.shape != (T + 1,):
+            raise TypeError("The shape of F should be (T+1,)")
+
+        H_torch = torch.from_numpy(H)
+        torch.roll
+
+        # Forward difference in time
+        Fprime = T * (np.roll(F, -1) - F)
+        Fprime_torch = torch.from_numpy(Fprime)
+
+        # Forward difference in time
+        dHdt = T * (np.roll(H, -1, 0) - H)
+        dHdt_torch = torch.from_numpy(dHdt)
+
+        # Central difference in space
+        gradH = [
+            (np.roll(H, -1, i + 1) - np.roll(H, 1, i + 1)) / (2 * dx[i])
+            for i in range(spatial_dim)
+        ]
+
+        gradH_torch = [torch.from_numpy(component) for component in gradH]
+    else:
+        H_torch = None
+        Fprime_torch = None
+        dHdt_torch = None
+        gradH_torch = None
+
     # Initialization of v and z
     v = np.zeros(v_shape)
     z = np.zeros(z_shape)
@@ -322,18 +540,30 @@ def wfr_grid_scipy(
     def loss_torch(_vz: torch.Tensor):
         """The loss function to be passed to torch.autograd.grad."""
 
-        # ToDo: Apply constraints here
-
         _v = _vz[: math.prod(v_shape)].reshape(v_shape)
         _z = _vz[math.prod(v_shape) :].reshape(z_shape)
 
         # Solve the continuity equation
-        divpz = functools.partial(_div_plus_pz_grid, v=_v, z=_z, dx=dx, T=T)
+        divpz = functools.partial(
+            _div_plus_pz_grid,
+            v=_v,
+            z=_z,
+            dx=dx,
+            T=T,
+            H=H_torch,
+            Fprime=Fprime_torch,
+            dHdt=dHdt_torch,
+            gradH=gradH_torch,
+        )
         _p = torchdiffeq.odeint(
             divpz,
             p1_torch,
             torch.arange(0, 1.0 + 1.0 / T, 1.0 / T),
             method=solver,
+        )
+
+        _v, _z = _batch_project_affine(
+            _p, _v, _z, H_torch, dHdt_torch, gradH_torch, Fprime_torch, dx
         )
 
         # Absolute value on p to avoid divergence to negative infinity
@@ -369,17 +599,34 @@ def wfr_grid_scipy(
     torch_v = torch.from_numpy(v)
     torch_z = torch.from_numpy(z)
 
-    divpz = functools.partial(_div_plus_pz_grid, v=torch_v, z=torch_z, dx=dx, T=T)
+    # Solve the continuity equation one last time to get the final solution
+    divpz = functools.partial(
+        _div_plus_pz_grid,
+        v=torch_v,
+        z=torch_z,
+        dx=dx,
+        T=T,
+        H=H_torch,
+        dHdt=dHdt_torch,
+        gradH=gradH_torch,
+        Fprime=Fprime_torch,
+    )
     torch_p = torchdiffeq.odeint(
         divpz, p1_torch, torch.arange(0, 1.0 + 1.0 / T, 1.0 / T), method=solver
     )
+
+    # Apply the constraint
+    torch_v, torch_z = _batch_project_affine(
+        torch_p, torch_v, torch_z, H_torch, dHdt_torch, gradH_torch, Fprime_torch, dx
+    )
+
     prod_dx = math.prod(dx)
     dt = 1.0 / T
     wfr = torch.sqrt(
         0.5 * _WFR_energy(torch_p[:-1], torch_v, torch_z, delta) * prod_dx * dt
     ).numpy()
 
-    return float(wfr), torch_p.numpy(), v, z
+    return float(wfr), torch_p.numpy(), torch_v.numpy(), torch_z.numpy()
 
 
 def wfr_grid_scipy_tunerel(
@@ -394,7 +641,7 @@ def wfr_grid_scipy_tunerel(
     num_iter: int = 1000,
     solver: str = "euler",
     optim: str = "lbfgs",
-    **optim_params
+    **optim_params,
 ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
     """Run wfr_grid_scipy and automatically tune the relaxation parameter. We gradually \
     increase the relaxation parameter and stops when the WFR distance reaches plateau. \

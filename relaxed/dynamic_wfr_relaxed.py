@@ -64,7 +64,7 @@ def _project_affine(
     for all t (We assume some regularity on p, v, z, h and f). This function projects v,z
     to the affine space defined by the equation above.
 
-    We will see the constraint above as the affine equation
+    We will see the constraint above as an affine equation
 
     <c, x> = b
 
@@ -420,10 +420,12 @@ def wfr_grid_scipy(
     search, saying that 'it only does only one line search'.
 
     Args:
-        p1 (np.ndarray): The discretized measure to calculate the distance between \
-        p2. The size of p1 and p2 implicitly defines the size of the grid.
+        p1 (np.ndarray): The discretized density to calculate the distance between \
+        p2. The size of p1 and p2 implicitly defines the size of the grid. \
+        We note that p1, p2 are assumed to be a DENSITY, that is, \
+        (p1.sum())*math.prod(dx)=1.
 
-        p1 (np.ndarray): The discretized measure to calculate the distance between \
+        p1 (np.ndarray): The discretized density to calculate the distance between \
         p2. The size of p1 and p2 implicitly defines the size of the grid.
 
         delta (float): The interpolation parameter for WFR.
@@ -638,6 +640,8 @@ def wfr_grid_scipy_tunerel(
     rel_stop: float = 10.0,
     rel_step: float = 1.0,
     dx: list[float] = None,
+    H: np.ndarray = None,
+    F: np.ndarray = None,
     num_iter: int = 1000,
     solver: str = "euler",
     optim: str = "lbfgs",
@@ -649,10 +653,10 @@ def wfr_grid_scipy_tunerel(
     terminates when the latest wfr is lower than the previous.
 
     Args:
-        p1 (np.ndarray): The discretized measure to calculate the distance between \
+        p1 (np.ndarray): The discretized density to calculate the distance between \
         p2. The size of p1 and p2 implicitly defines the size of the grid.
 
-        p1 (np.ndarray): The discretized measure to calculate the distance between \
+        p1 (np.ndarray): The discretized density to calculate the distance between \
         p2. The size of p1 and p2 implicitly defines the size of the grid.
 
         delta (float): The interpolation parameter for WFR.
@@ -669,6 +673,13 @@ def wfr_grid_scipy_tunerel(
             for the grid. The number of elements should match the number of \
             dimensions of p1, p2. if None, dx = [1/N_1, ..., 1/N_n] where \
             (N_1, ..., N_n) is the shape of p1,p2.
+
+        H (np.ndarray of shape (T+1, N_1,..,N_n)): The H function in the affine \
+        constraint int H(t,x) dp_t = F(t). (N_1,...,N_n) is the shape of p1, p2. \
+        H[i] corresponds to H(i/T, x).
+
+        F (np.ndarray of shape (T+1,)): The H function in the affine constraint \
+        int H(t,x) dp_t = F(t).  F[i] corresponds to F(i/T).
 
         num_iter (int), default = 1000: The maximal number of iterations.
 
@@ -702,7 +713,7 @@ def wfr_grid_scipy_tunerel(
 
     for rel in rels:
         wfr, p, v, z = wfr_grid_scipy(
-            p1, p2, delta, rel, T, dx, num_iter, solver, optim, **optim_params
+            p1, p2, delta, rel, T, dx, H, F, num_iter, solver, optim, **optim_params
         )
 
         if wfr <= wfr_prev:  # If no longer increasing

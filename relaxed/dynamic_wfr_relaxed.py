@@ -366,9 +366,7 @@ def wfr_grid(
 
         # Solve the continuity equation
         divpz = functools.partial(_div_plus_pz_grid, v=v, z=z, dx=dx, T=T)
-        p = torchdiffeq.odeint(
-            divpz, p1, torch.arange(0, 1.0 + 1.0 / T, 1.0 / T), method=solver
-        )
+        p = torchdiffeq.odeint(divpz, p1, torch.linspace(0, 1, T + 1), method=solver)
 
         # Find the loss
         loss = _WFR_energy(p[:-1], v, z, delta) + rel * torch.norm(p[-1] - p2)
@@ -386,7 +384,7 @@ def wfr_grid(
             break
 
     p = torchdiffeq.odeint(
-        divpz, p1, torch.arange(0, 1.0 + 1.0 / T, 1.0 / T), method=solver
+        divpz, p1, torch.linspace(0, 1.0, steps=T + 1), method=solver
     ).detach()
     prod_dx = math.prod(dx)
     dt = 1.0 / T
@@ -472,6 +470,9 @@ def wfr_grid_scipy(
 
     if rel < 0:
         raise ValueError("The relaxation constant should be nonnegative")
+
+    if T <= 0:
+        raise ValueError("T should be positive")
 
     if dx is None:
         dx = [1.0 / n for n in p1.shape]
@@ -560,7 +561,7 @@ def wfr_grid_scipy(
         _p = torchdiffeq.odeint(
             divpz,
             p1_torch,
-            torch.arange(0, 1.0 + 1.0 / T, 1.0 / T),
+            torch.linspace(0, 1, steps=T + 1),
             method=solver,
         )
 
@@ -614,7 +615,7 @@ def wfr_grid_scipy(
         Fprime=Fprime_torch,
     )
     torch_p = torchdiffeq.odeint(
-        divpz, p1_torch, torch.arange(0, 1.0 + 1.0 / T, 1.0 / T), method=solver
+        divpz, p1_torch, torch.linspace(0, 1, steps=T + 1), method=solver
     )
 
     # Apply the constraint

@@ -434,10 +434,10 @@ def wfr_grid_scipy(
 
         T (int):  The grid size in time. The step size in time is defined by 1/T.
 
-        v0 (np.ndarray of shape (N_1,..., N_n, n)): The initial guess for the vector \
+        v0 (np.ndarray of shape (T, N_1,..., N_n, n)): The initial guess for the vector \
         field. If None, it will default to the zero array.
 
-        z0 (np.ndarray of shape (N_1, ..., N_N)) : The initial guess for the source \
+        z0 (np.ndarray of shape (T, N_1, ..., N_n)) : The initial guess for the source \
         field. If None, it will default to the zero array.
 
         dx (list of floats), default = None: The step size in each spatial direction \
@@ -504,6 +504,23 @@ def wfr_grid_scipy(
     v_shape = (T,) + p1.shape + (spatial_dim,)
     z_shape = (T,) + p1.shape
 
+    # Initialization of v and z
+    if v0 is None:
+        v = np.zeros(v_shape)
+    else:
+        if v_shape != v0.shape:
+            raise TypeError(f"The shape of v0 should be: {v_shape}")
+        v = v0
+
+    if z0 is None:
+        z = np.zeros(z_shape)
+    else:
+        if z_shape != z0.shape:
+            raise TypeError(f"The shape of z0 should be: {z_shape}")
+        z = z0
+
+    vz = np.concatenate([v.flatten(), z.flatten()])
+
     # Constraint initialization
     if H is not None and F is not None:
         if H.shape[0] != T + 1:
@@ -535,23 +552,6 @@ def wfr_grid_scipy(
         Fprime_torch = None
         dHdt_torch = None
         gradH_torch = None
-
-    # Initialization of v and z
-    if v0 is None:
-        v = np.zeros(v_shape)
-    else:
-        if v_shape != v0.shape:
-            raise TypeError(f"The shape of v0 should be: {v_shape}")
-        v = v0
-
-    if z0 is None:
-        z = np.zeros(z_shape)
-    else:
-        if z_shape != z0.shape:
-            raise TypeError(f"The shape of z0 should be: {z_shape}")
-        z = z0
-
-    vz = np.concatenate([v.flatten(), z.flatten()])
 
     # If p1, p2 does not have the dtype `float64`, this will create a copy of them.
     # Otherwise, the torch version share the memory with the original.

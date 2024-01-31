@@ -222,7 +222,7 @@ def test_wfr_grid_samedist():
 
 
 """
-Test of dynamic_wfr_relaxed_grid_scipy
+Test of wfr_grid_scipy
 """
 
 
@@ -265,3 +265,17 @@ def test_wfr_grid_scipy_samedist_constrained():
     np.testing.assert_allclose(p, p_objective)
     np.testing.assert_allclose(v, v_objective)
     np.testing.assert_allclose(z, z_objective)
+
+
+def test_wfr_grid_scipy_wrong_initial_cond():
+    # p1=p2=uniform, v=z=wrong size, expected = TypeError
+    p1 = np.ones((10, 10))
+    p2 = p1
+    delta = 1
+    rel = 1
+    T = 100
+    v0 = np.zeros((T, 10))
+    z0 = np.zeros((T, 10, 10))
+
+    with pytest.raises(TypeError):
+        dynamic_wfr_relaxed.wfr_grid_scipy(p1, p2, delta, rel=rel, T=T, v0=v0, z0=z0)

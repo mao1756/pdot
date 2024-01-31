@@ -59,7 +59,7 @@ def _project_affine(
     By taking the derivative of both sides of the constraint and applying the continuity \
     equation, we have
 
-    int (-grad H * v + Hz)pdx = F'-int (dH/dt)pdx
+    int (grad H * v + Hz)pdx = F'-int (dH/dt)pdx
 
     for all t (We assume some regularity on p, v, z, h and f). This function projects v,z
     to the affine space defined by the equation above.
@@ -68,7 +68,7 @@ def _project_affine(
 
     <c, x> = b
 
-    where c = (c1,c2) = (-p gradH, pH), x = (v, z), b= F'-int (dH/dt)pdx at a given time \
+    where c = (c1,c2) = (p gradH, pH), x = (v, z), b= F'-int (dH/dt)pdx at a given time \
     and projects x onto this set by
 
     proj(x) = x - (<c,x>-b)c/|c|^2
@@ -92,7 +92,7 @@ def _project_affine(
     All of the functions are assumed to be evaluated at the same time.
     """
 
-    c1 = torch.stack([-p * gradH_component for gradH_component in gradH], dim=-1)
+    c1 = torch.stack([p * gradH_component for gradH_component in gradH], dim=-1)
     c2 = p * H
     b = Fprime - (dHdt * p).sum() * math.prod(dx)
 

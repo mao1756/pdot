@@ -435,10 +435,12 @@ def wfr_grid_scipy(
         T (int):  The grid size in time. The step size in time is defined by 1/T.
 
         v0 (np.ndarray of shape (T, N_1,..., N_n, n)): The initial guess for the vector \
-        field. If None, it will default to the zero array.
+        field. If None, it will default to the zero array. (N_1, ..., N_n) is the shape \
+        of p1,p2.
 
         z0 (np.ndarray of shape (T, N_1, ..., N_n)) : The initial guess for the source \
-        field. If None, it will default to the zero array.
+        field. If None, it will default to the zero array. (N_1, ..., N_n) is the shape \
+        of p1,p2.
 
         dx (list of floats), default = None: The step size in each spatial direction \
             for the grid. The number of elements should match the number of \

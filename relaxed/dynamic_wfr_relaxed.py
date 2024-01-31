@@ -80,7 +80,7 @@ def _project_affine(
 
         z (torch.Tensor of shape (N_1,...,N_n)) : The source field.
 
-        H (torch.Tensor of shape (N_1,...,N_n)) : The H function. \
+        H (torch.Tensor of shape (N_1,...,N_n)) : The H function.
 
         gradH (list of Tensors of shape (N_1,...,N_n)) : The gradient of H. H[i]\
         is assumed to be the derivative of H function w.r.t. the ith space variable.
@@ -399,6 +399,8 @@ def wfr_grid_scipy(
     delta: float,
     rel: float,
     T: float,
+    v0: np.ndarray = None,
+    z0: np.ndarray = None,
     dx: list[float] = None,
     H: np.ndarray = None,
     F: np.ndarray = None,
@@ -431,6 +433,12 @@ def wfr_grid_scipy(
         rel (float): The relaxation constant.
 
         T (int):  The grid size in time. The step size in time is defined by 1/T.
+
+        v0 (np.ndarray of shape (N_1,..., N_n, n)): The initial guess for the vector \
+        field. If None, it will default to the zero array.
+
+        z0 (np.ndarray of shape (N_1, ..., N_N)) : The initial guess for the source \
+        field. If None, it will default to the zero array.
 
         dx (list of floats), default = None: The step size in each spatial direction \
             for the grid. The number of elements should match the number of \
@@ -506,7 +514,6 @@ def wfr_grid_scipy(
             raise TypeError("The shape of F should be (T+1,)")
 
         H_torch = torch.from_numpy(H)
-        torch.roll
 
         # Forward difference in time
         Fprime = T * (np.roll(F, -1) - F)
@@ -530,8 +537,20 @@ def wfr_grid_scipy(
         gradH_torch = None
 
     # Initialization of v and z
-    v = np.zeros(v_shape)
-    z = np.zeros(z_shape)
+    if v0 is None:
+        v = np.zeros(v_shape)
+    else:
+        if v_shape != v0.shape:
+            raise TypeError(f"The shape of v0 should be: {v_shape}")
+        v = v0
+
+    if z0 is None:
+        z = np.zeros(z_shape)
+    else:
+        if z_shape != z0.shape:
+            raise TypeError(f"The shape of z0 should be: {z_shape}")
+        z = z0
+
     vz = np.concatenate([v.flatten(), z.flatten()])
 
     # If p1, p2 does not have the dtype `float64`, this will create a copy of them.
@@ -623,6 +642,7 @@ def wfr_grid_scipy(
         torch_p, torch_v, torch_z, H_torch, dHdt_torch, gradH_torch, Fprime_torch, dx
     )
 
+    # Calculate the WFR distance (or the square root of the optimal energy)
     prod_dx = math.prod(dx)
     dt = 1.0 / T
     wfr = torch.sqrt(

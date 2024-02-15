@@ -197,6 +197,74 @@ def test_div_plus_pz_grid_sintime():
     )
 
 
+def test_div_plus_pz_grid_linear_upwind1():
+    # Tries to calculate the diveregnce of f(x)=x which should be 1
+    t = torch.tensor(0)
+    N1 = 10
+    p = -torch.ones(N1)
+    v = torch.arange(0, 1.0, 1.0 / 10).reshape(1, -1, 1)
+    dx = [1.0 / 10]
+    z = torch.zeros((1, 10))
+    T = 1
+
+    div = dynamic_wfr_relaxed._div_plus_pz_grid(t, p, v, z, dx, T, scheme="upwind1")
+    # Excluding the endpoint because of periodicity
+    torch.testing.assert_close(div[1:-1], torch.ones(N1)[1:-1])
+
+
+def test_div_plus_pz_grid_sin_upwind1():
+    # Tries to calculate the divergence of f(x) = sin(x)
+    # This should be cos(x)
+    t = torch.tensor(0)
+    N1 = 20
+    p = -torch.ones(N1)
+    xs = torch.arange(0, 2 * math.pi, 2 * math.pi / N1)
+    v = torch.sin(xs).reshape(1, -1, 1)
+    dx = [2 * math.pi / N1]
+    z = torch.zeros((1, N1))
+    T = 1
+
+    div = dynamic_wfr_relaxed._div_plus_pz_grid(t, p, v, z, dx, T, scheme="upwind1")
+    torch.testing.assert_close(div, torch.cos(xs), atol=2 * math.pi / N1, rtol=0)
+
+
+def test_div_plus_pz_grid_sintime_upwind1():
+    # Tries to calculate the divergence of f(x) = sin(x-t) for random t
+    # expected: cos(x-t)
+    T = 10
+    t = torch.tensor(random.random())
+    N1 = 20
+    p = -torch.ones(N1)
+    xs = torch.arange(0, 2 * math.pi, 2 * math.pi / N1).reshape(1, -1, 1)
+    ts = torch.arange(0, (T - 1) / T, 1.0 / T).reshape(-1, 1, 1)
+    xsts = xs - ts
+    v = torch.sin(xsts)
+    dx = [2 * math.pi / N1]
+    z = torch.zeros((T, N1))
+
+    div = dynamic_wfr_relaxed._div_plus_pz_grid(t, p, v, z, dx, T, scheme="upwind1")
+    torch.testing.assert_close(
+        div, torch.cos(xs.squeeze() - t), atol=2 * math.pi / N1 + 1.0 / T, rtol=0
+    )
+
+
+def test_div_plus_pz_grid_linear_lax_wendroff():
+    # Tries to calculate the diveregnce of f(x)=x which should be 1
+    t = torch.tensor(0)
+    N1 = 10
+    p = -torch.ones(N1)
+    v = torch.arange(0, 1.0, 1.0 / 10).reshape(1, -1, 1)
+    dx = [1.0 / 10]
+    z = torch.zeros((1, 10))
+    T = 1
+
+    div = dynamic_wfr_relaxed._div_plus_pz_grid(
+        t, p, v, z, dx, T, scheme="lax-wendroff"
+    )
+    # Excluding the endpoint because of periodicity
+    torch.testing.assert_close(div[1:-1], torch.ones(N1)[1:-1])
+
+
 """
 Test of wfr_grid
 """

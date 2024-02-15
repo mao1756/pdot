@@ -6,6 +6,41 @@ import functools
 import math
 
 
+def smooth_abs(x: torch.tensor, param: float = 1.0, style: str = "softabs"):
+    """Calculates the smooth approximation of an absolute value function.
+
+    This function calculates:
+        softabs(x) = (2/k)log(1+e^(kx))-x-(2/k)log(2)
+    or
+        sqrtabs(x) = sqrt(x^2+e)
+
+    where k=param or e=1/param. The function converegs to abs(x) as param->infinity.
+
+    Args:
+        x (torch.Tensor) : The input.
+
+        param (float) : The smoothness parameter. The larger, the less smooth.
+
+        style (str) : The approximation style. "softabs" and "sqrtabs" are available.
+
+    Returns:
+        torch.Tensor: The result of the evaluation.
+
+    """
+    if style == "softabs":
+        abs = (
+            (2.0 / param) * torch.log(1 + torch.exp(param * x))
+            - x
+            - (2.0 / param) * torch.log(2.0)
+        )
+    elif style == "sqrtabs":
+        abs = torch.sqrt(x**2 + 1.0 / param)
+    else:
+        raise ValueError(f"The style `{style}` not found")
+
+    return abs
+
+
 def _WFR_energy(p: torch.Tensor, v: torch.Tensor, z: torch.Tensor, delta: float):
     """Calculates the Wasserstein-Fisher-Rao energy for the path (p, v, z).
 
@@ -186,6 +221,7 @@ def _div_plus_pz_grid(
     dHdt: torch.Tensor = None,
     gradH: list = None,
     Fprime: torch.Tensor = None,
+    scheme: str = "central",
 ):
     """Calculates -div(pv)+pz given p, v and z where div is the Euclidean divergence.
 
@@ -224,6 +260,12 @@ def _div_plus_pz_grid(
         F at t=i/T. Fprime[i] is F'(t) at t=i/T. if any of H,  dHdt, gradH and Fprime is\
         `None`, we assume there is no constraint.
 
+        scheme (str) : The finite difference scheme used.  Available: \
+            'central' : The central difference (Default), \
+            'upwind1' : The first order upwind scheme, \
+            'smooth-upwind1' : The first order upwind scheme with a smooth abs function. \
+            'lax-wendroff' : The Lax-Wendroff scheme.
+
         Returns:
             torch.Tensor of shape (N1, ..., Nn): -div(pv)+pz at time t.
 
@@ -234,6 +276,7 @@ def _div_plus_pz_grid(
     # histogram centered at each grid
     time_step_num = torch.round(t * T).int()
     time_step_num = min(time_step_num, T - 1)  # avoid rounding to t=T
+    dt = 1.0 / T
 
     spatial_dim = len(dx)
 
@@ -253,15 +296,47 @@ def _div_plus_pz_grid(
         _v = v[time_step_num]
         _z = z[time_step_num]
 
-    # pre_div represents the list of (pv_i(t, ...x_i+dx_i...)-pv_i(t, ...x_i-dx_i...))
-    # /2dx_i
-    # in each dimension i.e. a numerical approximation of
-    # (∂pv_1/∂x1, ∂pv_2/∂x2, ..., ∂pv_n/∂xn)
-    pre_div = [
-        (torch.roll(p * _v[..., i], -1, i) - torch.roll(p * _v[..., i], 1, i))
-        / (2 * dx[i])
-        for i in range(spatial_dim)
-    ]
+    if scheme == "central":
+        # pre_div represents the list of (pv_i(t, ...x_i+dx_i...)-pv_i(t, ...x_i-dx_i...))
+        # /2dx_i
+        # in each dimension i.e. a numerical approximation of
+        # (∂pv_1/∂x1, ∂pv_2/∂x2, ..., ∂pv_n/∂xn)
+        pre_div = [
+            (torch.roll(p * _v[..., i], -1, i) - torch.roll(p * _v[..., i], 1, i))
+            / (2 * dx[i])
+            for i in range(spatial_dim)
+        ]
+    elif scheme == "upwind1":
+        pre_div = [
+            torch.where(
+                _v[..., i] > 0,
+                (torch.roll(p * _v[..., i], -1, i) - p * _v[..., i]) / dx[i],
+                (p * _v[..., i] - torch.roll(p * _v[..., i], 1, i)) / dx[i],
+            )
+            for i in range(spatial_dim)
+        ]
+    elif scheme == "smooth-upwind1":
+        raise NotImplementedError("Coming Soon")
+    elif scheme == "lax-wendroff":
+        # MacCormack method
+
+        p_star = [
+            p - dt * (torch.roll(p * _v[..., i], -1, i) - p * _v[..., i]) / (dx[i])
+            for i in range(spatial_dim)
+        ]
+
+        pre_div = [
+            (
+                torch.roll(p * _v[..., i], -1, i)
+                - torch.roll(p * _v[..., i], 1, i)
+                + p_star[i] * _v[..., i]
+                - torch.roll(p_star[i] * _v[..., i], 1, i)
+            )
+            / (2 * dx[i])
+            for i in range(spatial_dim)
+        ]
+    else:
+        raise ValueError(f"The scheme `{scheme}` not found")
 
     divpv = sum(pre_div)
 
@@ -279,6 +354,7 @@ def wfr_grid(
     rtol: float = 1e-5,
     num_iter: int = 1000,
     solver: str = "euler",
+    scheme: str = "central",
     optim_class: torch.optim.Optimizer = torch.optim.SGD,
     **optim_params,
 ):
@@ -310,6 +386,9 @@ def wfr_grid(
         num_iter (int), default = 1000: The maximal number of iterations.
 
         solver (str), default = 'euler': The ODE solver used for torchdiffeq.
+
+        scheme (str), default = 'central': The finite difference scheme used for \
+        the space derivative.
 
         optim_class (torch.optim.Optimizer), default = 'torch.optim.SGD': The scipy \
               optimizer to use. Currently, only `lbfgs` is supported.
@@ -365,7 +444,9 @@ def wfr_grid(
         optimizer.zero_grad()
 
         # Solve the continuity equation
-        divpz = functools.partial(_div_plus_pz_grid, v=v, z=z, dx=dx, T=T)
+        divpz = functools.partial(
+            _div_plus_pz_grid, v=v, z=z, dx=dx, T=T, scheme=scheme
+        )
         p = torchdiffeq.odeint(divpz, p1, torch.linspace(0, 1, T + 1), method=solver)
 
         # Find the loss
@@ -406,6 +487,7 @@ def wfr_grid_scipy(
     F: np.ndarray = None,
     num_iter: int = 1000,
     solver: str = "euler",
+    scheme: str = "central",
     optim: str = "lbfgs",
     **optim_params,
 ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
@@ -457,6 +539,12 @@ def wfr_grid_scipy(
         num_iter (int), default = 1000: The maximal number of iterations.
 
         solver (str), default = 'euler': The ODE solver used for torchdiffeq.
+
+        scheme (str) : The finite difference scheme used.  Available: \
+            'central' : The central difference (Default), \
+            'upwind1' : The first order upwind scheme, \
+            'smooth-upwind1' : The first order upwind scheme with a smooth abs function. \
+            'lax-wendroff' : The Lax-Wendroff scheme.
 
         optim (str), default = 'lbfgs': The scipy optimizer to use. \
             Currently, only `lbfgs` is supported.
@@ -578,6 +666,7 @@ def wfr_grid_scipy(
             Fprime=Fprime_torch,
             dHdt=dHdt_torch,
             gradH=gradH_torch,
+            scheme=scheme,
         )
         _p = torchdiffeq.odeint(
             divpz,
@@ -634,6 +723,7 @@ def wfr_grid_scipy(
         dHdt=dHdt_torch,
         gradH=gradH_torch,
         Fprime=Fprime_torch,
+        scheme=scheme,
     )
     torch_p = torchdiffeq.odeint(
         divpz, p1_torch, torch.linspace(0, 1, steps=T + 1), method=solver

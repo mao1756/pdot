@@ -144,6 +144,89 @@ def _project_affine(
     return v_new, z_new
 
 
+def _project_affine_hi_dim(
+    p: torch.Tensor,
+    v: torch.Tensor,
+    z: torch.Tensor,
+    H: torch.Tensor,
+    dHdt: torch.Tensor,
+    gradH: list,
+    Fprime: torch.Tensor,
+    dx: list,
+):
+    """_project_affine for multiple constraints. Given an unconstrained v and z, returns\
+    v and z projected onto the constraint int H_k(t,x)dp_t = F_k(t) for all k.
+
+    We see the constraint
+    int (grad H_k * v + H_k * z)pdx = F_k'-int (dH_k/dt)pdx
+    as an affine equation
+
+    <c_k, x> = b_k
+
+    where c_k = (c1_k,c2_k) = (p gradH_k, pH_k), x = (v, z), b_k= F_k'-int (dH_k/dt)pdx\
+    at a given time.
+
+    This means that we have a system of equations
+    <c_k, x> = b_k for all k
+    or in matrix form,
+    Cx = b
+    where C=[c_1, c_2, ..., c_k]^T, x=[v, z], b=[b_1, b_2, ..., b_k]^T.
+
+    Given any x, we can project it onto the set of solutions of the system of equations by
+    proj(x) = x - C^T(C C^T)^-1(Cx-b)
+    We use this formula to project v and z onto the set of solutions of the system of \
+    equations.
+
+        Args:
+            p (torch.Tensor of shape (N_1,...,N_n)) : The density at a given time.
+
+            v (torch.Tensor of shape (N_1,...,N_n, n)) : The velocity field.
+
+            z (torch.Tensor of shape (N_1,...,N_n)) : The source field.
+
+            H (torch.Tensor of shape (k, N_1,...,N_n)) : The H functions. H[k] is assumed\
+            to be the H function for the kth constraint.
+
+            dH/dt (torch.Tensor of shape (k, N_1,...,N_n)) : The derivative of H function\
+            in the constraint. dHdt[k] is assumed to be the dH/dt for the kth constraint.
+
+            gradH (list of list of Tensors of shape (N_1,...,N_n)) : The gradient of H.
+            gradH[k][i] is assumed to be the derivative of H function w.r.t. the ith\
+            space variable for the kth constraint,
+
+            Fprime (torch.Tensor of shape (k,)) : The derivative of the F function.
+            Fprime[k] is assumed to be the F function for the kth constraint.
+
+            dx (list of floats) : The list of space steps.
+
+        All of the functions are assumed to be evaluated at the same time.
+        """
+
+    k = H.shape[0]
+    c = []  # We will store c_k in this list
+    b = []  # We will store b_k in this list
+    for i in range(k):
+        c1 = torch.stack([p * gradH_component for gradH_component in gradH[i]], dim=-1)
+        c2 = p * H[i]
+        c.append(torch.cat([c1.flatten(), c2.flatten()]))
+        b.append(Fprime[i] - (dHdt[i] * p).sum() * math.prod(dx))
+
+    c = torch.stack(c)
+    b = torch.stack(b)
+
+    # Use the formula proj(x) = x - C^T(C C^T)^-1(Cx-b)
+    x = torch.cat([v.flatten(), z.flatten()])
+    c_ct = c @ c.t()
+    c_ct_inv = torch.inverse(c_ct)
+    c_ct_inv_cx = c_ct_inv @ (c @ x - b)
+    proj = x - c.t() @ c_ct_inv_cx
+
+    v_new = proj[: math.prod(v.shape)].reshape(v.shape)
+    z_new = proj[math.prod(v.shape) :].reshape(z.shape)
+
+    return v_new, z_new
+
+
 def _batch_project_affine(
     p: torch.Tensor,
     v: torch.Tensor,
@@ -317,6 +400,8 @@ def _div_plus_pz_grid(
         ]
     elif scheme == "smooth-upwind1":
         raise NotImplementedError("Coming Soon")
+    # Todo: implement this https://scicomp.stackexchange.com/questions/1960/a-good-finite
+    # -difference-for-the-continuity-equation
     elif scheme == "lax-wendroff":
         # MacCormack method
 

@@ -180,6 +180,7 @@ def _project_affine(
 
     int (grad H * v + Hz)pdx = F'-int (dH/dt)pdx
 
+
     for all t (We assume some regularity on p, v, z, h and f). This function projects v,z
     to the affine space defined by the equation above.
 

@@ -6,6 +6,90 @@ import functools
 import math
 
 
+def _calculate_derivatives(
+    H: np.ndarray, F: np.ndarray, dx: list, T: int, spatial_shape: tuple
+):
+    """Calculates the derivatives of the H function and the F function.
+
+    Args:
+        H (np.ndarray of shape (T+1, N_1,...,N_n)) or (k, T+1, N_1,....,N_n) : The H \
+        funtion in the constraint. The latter is used for multiple constraints. \
+        For a single constraint, H[i] is H(i/T, x).
+
+        F (np.ndarray of shape (T+1) or (k,T+1)): The F function in the \
+        constraint. The latter is used for multiple constraints.  \
+        For a single constraint, F[i] is F at t=i/T.
+
+        dx (list of floats): The step size in each spatial direction for the grid.
+
+        T (int):  The grid size in time. The step size in time is defined by 1/T.
+
+        spatial_shape (tuple of int) : The shape of p1 = the shape of p2.
+
+    Returns:
+        dHdt (torch.Tensor of shape (T+1, N_1,...,N_n)): The derivative of H function \
+        in the constraint. dHdt[i] is dH/dt at t=i/T.
+
+
+    """
+    spatial_dim = len(spatial_shape)
+
+    if len(H.shape) == spatial_dim + 1:  # single constraint
+        if H.shape[0] != T + 1:
+            raise TypeError("The first dimension of H should be T+1")
+        if H.shape[1:] != spatial_shape:
+            raise TypeError("The spatial shape of H does not match p1.shape")
+        if F.shape != (T + 1,):
+            raise TypeError("The shape of F should be (T+1,)")
+
+        H_torch = torch.from_numpy(H)
+        # Forward difference in time
+        Fprime = T * (np.roll(F, -1) - F)
+        Fprime_torch = torch.from_numpy(Fprime)
+
+        # Forward difference in time
+        dHdt = T * (np.roll(H, -1, 0) - H)
+        dHdt_torch = torch.from_numpy(dHdt)
+
+        # Central difference in space
+        gradH = [
+            (np.roll(H, -1, i + 1) - np.roll(H, 1, i + 1)) / (2 * dx[i])
+            for i in range(spatial_dim)
+        ]
+        gradH_torch = [torch.from_numpy(component) for component in gradH]
+
+    if len(H.shape) == spatial_dim + 2:  # muliple constraints
+        k = H.shape[0]
+        if H.shape[1] != T + 1:
+            raise TypeError("The second dimension of H should be T+1")
+        if H.shape[2:] != spatial_shape:
+            raise TypeError("The spatial shape of H does not match p1.shape")
+        if F.shape != (k, T + 1):
+            raise TypeError("The shape of F should be (H.shape[0], T+1)")
+        H_torch = torch.from_numpy(H)
+        # Forward difference in time
+        Fprime = T * (np.roll(F, -1) - F)
+        Fprime_torch = torch.from_numpy(Fprime)
+        # Forward difference in time
+        dHdt = T * (np.roll(H, -1, 0) - H)
+        dHdt_torch = torch.from_numpy(dHdt)
+        # Central difference in space
+        gradH = [
+            [
+                (np.roll(H[constraint], -1, i + 1) - np.roll(H[constraint], 1, i + 1))
+                / (2 * dx[i])
+                for i in range(spatial_dim)
+            ]
+            for constraint in range(k)
+        ]
+        gradH_torch = [
+            [torch.from_numpy(component) for component in gradH[constraint]]
+            for constraint in range(k)
+        ]
+
+    return H_torch, Fprime_torch, dHdt_torch, gradH_torch
+
+
 def smooth_abs(x: torch.tensor, param: float = 1.0, style: str = "softabs"):
     """Calculates the smooth approximation of an absolute value function.
 
@@ -174,6 +258,7 @@ def _project_affine_hi_dim(
 
     Given any x, we can project it onto the set of solutions of the system of equations by
     proj(x) = x - C^T(C C^T)^-1(Cx-b)
+    proj(x) = x - (<c,x>-b)c/|c|^2
     We use this formula to project v and z onto the set of solutions of the system of \
     equations.
 
@@ -205,25 +290,39 @@ def _project_affine_hi_dim(
     k = H.shape[0]
     c = []  # We will store c_k in this list
     b = []  # We will store b_k in this list
-    for i in range(k):
-        c1 = torch.stack([p * gradH_component for gradH_component in gradH[i]], dim=-1)
-        c2 = p * H[i]
+    for num_constraint in range(k):
+        c1 = torch.stack(
+            [p * gradH_component for gradH_component in gradH[num_constraint]],
+            dim=-1,
+        )
+        c2 = p * H[num_constraint]
         c.append(torch.cat([c1.flatten(), c2.flatten()]))
-        b.append(Fprime[i] - (dHdt[i] * p).sum() * math.prod(dx))
-
+        b.append(
+            Fprime[num_constraint] - (dHdt[num_constraint] * p).sum() * math.prod(dx)
+        )
     c = torch.stack(c)
     b = torch.stack(b)
 
+    # Scale c and b by the norm of c to avoid instability
+    # c_norm = torch.norm(c)
+    # c = c / c_norm
+    # b = b / c_norm
     # Use the formula proj(x) = x - C^T(C C^T)^-1(Cx-b)
     x = torch.cat([v.flatten(), z.flatten()])
     c_ct = c @ c.t()
-    c_ct_inv = torch.inverse(c_ct)
+    # raise error if c_ct is not invertible
+    try:
+        c_ct_inv = torch.inverse(c_ct)
+    except torch.linalg.LinAlgError:
+        raise ValueError(
+            "The matrix C C^T is not invertible. The constraints are not \
+                         linearly independent. We cannot project to the affine space."
+        )
     c_ct_inv_cx = c_ct_inv @ (c @ x - b)
     proj = x - c.t() @ c_ct_inv_cx
 
     v_new = proj[: math.prod(v.shape)].reshape(v.shape)
     z_new = proj[math.prod(v.shape) :].reshape(z.shape)
-
     return v_new, z_new
 
 
@@ -250,42 +349,69 @@ def _batch_project_affine(
         z: torch.Tensor of shape (T, N1, N2, ..., N_n)
             The source function for all time.
 
-        H (torch.Tensor of shape (T+1, N_1,...,N_n)) : The H funtion in the constraint. \
-        H[i] is H(i/T, x). if any of H,  dHdt, gradH and Fprime is `None`, we assume \
-        there is no constraint.
+        H (torch.Tensor of shape (T+1, N_1,...,N_n)) or (k, T+1, N_1,....,N_n) : The H \
+        funtion in the constraint. The latter is used for multiple constraints. \
+        For a single constraint,H[i] is H(i/T, x). \
+        If any of H,  dHdt, gradH and Fprime is `None`, we assume there is no constraint.
 
-        dH/dt (torch.Tensor of shape (T+1, N_1,...,N_n)) : The derivative of H function \
-        in the constraint. dHdt[i] is dH/dt at t=i/T. if any of H, dHdt, gradH and Fprime\
+        dH/dt (torch.Tensor of shape (T+1, N_1,...,N_n)) or (k,T+1, N_1,...,N_n): The \
+        derivative of H function in the constraint. The latter is used for multiple \
+        constraints, For a single constraint,\
+        dHdt[i] is dH/dt at t=i/T. If any of H, dHdt, gradH and Fprime\
         is `None`, we assume there is no constraint.
 
-        gradH (list of n Tensors of shape (T+1, N_1,....,N_n)): The gradient of the H \
-        function in the constraint. gradH[i][j] is the derivative of H by the ith space\
-        variable evaluated at t=j/T. If any of H, dHdt, gradH and Fprime is\
-        `None`, we assume there is no constraint.
+        gradH (list of n Tensors of shape (T+1, N_1,....,N_n)) or a list of k former\
+        lists: The gradient of the H \
+        function in the constraint. The latter is used for multiple constraints. \
+        For a single constraint, gradH[i][j] is the \
+        derivative of H by the ith space variable evaluated at t=j/T. If any of H,\
+        dHdt, gradH and Fprime is `None`, we assume there is no constraint.
 
-        Fprime (torch.Tensor of shape (T+1)) : The F function in the constraint. F[i] is \
-        F at t=i/T. Fprime[i] is F'(t) at t=i/T. if any of H,  dHdt, gradH and Fprime is\
-        `None`, we assume there is no constraint.
+        Fprime (torch.Tensor of shape (T+1) or (k,T+1)) : The F function in the \
+        constraint. The latter is used for multiple constraints.  \
+        For a single constraint, \
+        F[i] is F at t=i/T. Fprime[i] is F'(t) at t=i/T. if any of H,\
+        dHdt, gradH and Fprime is `None`, we assume there is no constraint.
 
         dx (list of floats) : The space steps in each dimension.
     """
 
     new_v = torch.zeros_like(v)
     new_z = torch.zeros_like(z)
+    n = v.shape[-1]
 
     T = p.shape[0] - 1
     if all(var is not None for var in [H, dHdt, gradH, Fprime]):
-        for time_step in range(T):
-            new_v[time_step], new_z[time_step] = _project_affine(
-                p[time_step],
-                v[time_step],
-                z[time_step],
-                H[time_step],
-                dHdt[time_step],
-                [component[time_step] for component in gradH],
-                Fprime[time_step],
-                dx,
-            )
+        if len(H.shape) == n + 1:  # single constraint
+            for time_step in range(T):
+                new_v[time_step], new_z[time_step] = _project_affine(
+                    p[time_step],
+                    v[time_step],
+                    z[time_step],
+                    H[time_step],
+                    dHdt[time_step],
+                    [component[time_step] for component in gradH],
+                    Fprime[time_step],
+                    dx,
+                )
+        elif len(H.shape) == n + 2:  # multiple constraint
+            for time_step in range(T):
+                k = H.shape[0]
+                new_v[time_step], new_z[time_step] = _project_affine_hi_dim(
+                    p[time_step],
+                    v[time_step],
+                    z[time_step],
+                    H[:, time_step],
+                    dHdt[:, time_step],
+                    [
+                        [component[time_step] for component in gradH[constraint]]
+                        for constraint in range(k)
+                    ],
+                    Fprime[:, time_step],
+                    dx,
+                )
+        else:
+            raise ValueError("The shape of H, dHdt, gradH and Fprime is not valid")
     else:
         new_v = v
         new_z = z
@@ -326,22 +452,29 @@ def _div_plus_pz_grid(
         T: int
             The grid size in time. The step size in time is defined by 1/T.
 
-        H (torch.Tensor of shape (T+1, N_1,...,N_n)) : The H funtion in the constraint. \
-        H[i] is H(i/T, x). if any of H,  dHdt, gradH and Fprime is `None`, we assume \
-        there is no constraint.
+        H (torch.Tensor of shape (T+1, N_1,...,N_n)) or (k, T+1, N_1,....,N_n) : The H \
+        funtion in the constraint. The latter is used for multiple constraints. \
+        For a single constraint,H[i] is H(i/T, x). \
+        If any of H,  dHdt, gradH and Fprime is `None`, we assume there is no constraint.
 
-        dH/dt (torch.Tensor of shape (T+1, N_1,...,N_n)) : The derivative of H function \
-        in the constraint. dHdt[i] is dH/dt at t=i/T. if any of H, dHdt, gradH and Fprime\
+        dH/dt (torch.Tensor of shape (T+1, N_1,...,N_n)) or (k,T+1, N_1,...,N_n): The \
+        derivative of H function in the constraint. The latter is used for multiple \
+        constraints, For a single constraint,\
+        dHdt[i] is dH/dt at t=i/T. If any of H, dHdt, gradH and Fprime\
         is `None`, we assume there is no constraint.
 
-        gradH (list of n Tensors of shape (T+1, N_1,....,N_n)): The gradient of the H \
-        function in the constraint. gradH[i][j] is the derivative of H by the ith space\
-        variable evaluated at t=j/T. If any of H, dHdt, gradH and Fprime is\
-        `None`, we assume there is no constraint.
+        gradH (list of n Tensors of shape (T+1, N_1,....,N_n)) or a list of k former\
+        lists: The gradient of the H \
+        function in the constraint. The latter is used for multiple constraints. \
+        For a single constraint, gradH[i][j] is the \
+        derivative of H by the ith space variable evaluated at t=j/T. If any of H,\
+        dHdt, gradH and Fprime is `None`, we assume there is no constraint.
 
-        Fprime (torch.Tensor of shape (T+1)) : The F function in the constraint. F[i] is \
-        F at t=i/T. Fprime[i] is F'(t) at t=i/T. if any of H,  dHdt, gradH and Fprime is\
-        `None`, we assume there is no constraint.
+        Fprime (torch.Tensor of shape (T+1) or (k,T+1)) : The F function in the \
+        constraint. The latter is used for multiple constraints.  \
+        For a single constraint, \
+        F[i] is F at t=i/T. Fprime[i] is F'(t) at t=i/T. if any of H,\
+        dHdt, gradH and Fprime is `None`, we assume there is no constraint.
 
         scheme (str) : The finite difference scheme used.  Available: \
             'central' : The central difference (Default), \
@@ -360,21 +493,39 @@ def _div_plus_pz_grid(
     time_step_num = torch.round(t * T).int()
     time_step_num = min(time_step_num, T - 1)  # avoid rounding to t=T
     dt = 1.0 / T
-
+    n = v.shape[-1]
     spatial_dim = len(dx)
 
     # Apply the constraint
     if all(var is not None for var in [H, dHdt, gradH, Fprime]):
-        _v, _z = _project_affine(
-            p,
-            v[time_step_num],
-            z[time_step_num],
-            H[time_step_num],
-            dHdt[time_step_num],
-            [component[time_step_num] for component in gradH],
-            Fprime[time_step_num],
-            dx,
-        )
+        if len(H.shape) == n + 1:  # single constraint
+            _v, _z = _project_affine(
+                p,
+                v[time_step_num],
+                z[time_step_num],
+                H[time_step_num],
+                dHdt[time_step_num],
+                [component[time_step_num] for component in gradH],
+                Fprime[time_step_num],
+                dx,
+            )
+        elif len(H.shape) == n + 2:  # mutiple constraint
+            k = H.shape[0]
+            _v, _z = _project_affine_hi_dim(
+                p,
+                v[time_step_num],
+                z[time_step_num],
+                H[:, time_step_num],
+                dHdt[:, time_step_num],
+                [
+                    [component[time_step_num] for component in gradH[constraint]]
+                    for constraint in range(k)
+                ],
+                Fprime[:, time_step_num],
+                dx,
+            )
+        else:
+            raise ValueError("The shape of H, dHdt, gradH and Fprime is not valid")
     else:
         _v = v[time_step_num]
         _z = z[time_step_num]
@@ -424,6 +575,9 @@ def _div_plus_pz_grid(
         raise ValueError(f"The scheme `{scheme}` not found")
 
     divpv = sum(pre_div)
+    # print('div',divpv)
+    # print('_v',_v)
+    # print('_z',_z)
 
     return -divpv + p * _z
 
@@ -698,30 +852,9 @@ def wfr_grid_scipy(
 
     # Constraint initialization
     if H is not None and F is not None:
-        if H.shape[0] != T + 1:
-            raise TypeError("The first dimension of H should be T+1")
-        if H.shape[1:] != p1.shape:
-            raise TypeError("The spatial shape of H does not match p1.shape")
-        if F.shape != (T + 1,):
-            raise TypeError("The shape of F should be (T+1,)")
-
-        H_torch = torch.from_numpy(H)
-
-        # Forward difference in time
-        Fprime = T * (np.roll(F, -1) - F)
-        Fprime_torch = torch.from_numpy(Fprime)
-
-        # Forward difference in time
-        dHdt = T * (np.roll(H, -1, 0) - H)
-        dHdt_torch = torch.from_numpy(dHdt)
-
-        # Central difference in space
-        gradH = [
-            (np.roll(H, -1, i + 1) - np.roll(H, 1, i + 1)) / (2 * dx[i])
-            for i in range(spatial_dim)
-        ]
-
-        gradH_torch = [torch.from_numpy(component) for component in gradH]
+        H_torch, Fprime_torch, dHdt_torch, gradH_torch = _calculate_derivatives(
+            H, F, dx, T, p1.shape
+        )
     else:
         H_torch = None
         Fprime_torch = None

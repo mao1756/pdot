@@ -141,6 +141,160 @@ def test_project_affine_constantmass():
     torch.testing.assert_close((z_new * p).sum(), torch.tensor(0.0))
 
 
+def test_project_affine_hi_dim_allzero():
+    """Pass the zero input for all of the variables to check if it gives us any error."""
+
+    time_step_num = 5
+    T = 10
+    n = 3
+    k = 10
+    grid_shape = (10, 61, 21)
+    p = torch.zeros(grid_shape)
+    v = torch.zeros(grid_shape + (n,))
+    z = torch.zeros(grid_shape)
+    H = torch.zeros((k,) + (T + 1,) + grid_shape)
+    F = torch.zeros((k,) + (T + 1,))
+    dx = [1 / s for s in grid_shape]
+    spatial_dim = len(dx)
+    # Forward difference in time
+    Fprime = T * (torch.roll(F, -1) - F)
+    Fprime = Fprime[:, time_step_num]
+
+    # Forward difference in time
+    dHdt = T * (torch.roll(H, -1, 0) - H)
+    dHdt = dHdt[:, time_step_num]
+
+    # Central difference in space
+    gradH = [
+        [
+            (
+                torch.roll(H[constraint, time_step_num], -1, i)
+                - torch.roll(H[constraint, time_step_num], 1, i)
+            )
+            / (2 * dx[i])
+            for i in range(spatial_dim)
+        ]
+        for constraint in range(k)
+    ]
+
+    # Check if it outputs ValuEerror
+
+    try:
+        v_new, z_new = dynamic_wfr_relaxed._project_affine_hi_dim(
+            p, v, z, H[:, time_step_num], dHdt, gradH, Fprime, dx
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("_project_affine_hi_dim did not raise ValueError")
+
+
+"""
+Test of _project_affine_hi_dim
+"""
+
+
+def test_project_affine_hi_dim_split_one():
+    """Pass v and z with all ones to enforce the constraint
+    (1,1,1,0,0,0)*z = 0
+    (0,0,0,1,1,1)*z = 0
+    so that z will be zero. As a side effect v will also change but we don't check it \
+    here.
+    """
+    k = 2
+    time_step_num = 2
+    T = 5
+    N = 6
+    grid_shape = (N,)
+    n = len(grid_shape)
+    p = torch.tensor([1, 1, 1, 1, 1, 1])
+    v = torch.ones(grid_shape + (n,))
+    z = torch.ones(grid_shape)
+    H_template_1 = [1, 1, 1, 0, 0, 0]
+    H_template_2 = [0, 0, 0, 1, 1, 1]
+    H = torch.stack([torch.tensor(H_template_1), torch.tensor(H_template_2)], dim=0)
+    H = H.unsqueeze(1).expand(k, T + 1, N)
+    F = torch.zeros((k,) + (T + 1,))
+    dx = [1 / s for s in grid_shape]
+    spatial_dim = len(dx)
+    # Forward difference in time
+    Fprime = T * (torch.roll(F, -1, 1) - F)
+    Fprime = Fprime[:, time_step_num]
+
+    # Forward difference in time
+    dHdt = T * (torch.roll(H, -1, 1) - H)
+    dHdt = dHdt[:, time_step_num, ...]
+
+    # Central difference in space
+    gradH = [
+        [
+            (
+                torch.roll(H[constraint, time_step_num], -1, i)
+                - torch.roll(H[constraint, time_step_num], 1, i)
+            )
+            / (2 * dx[i])
+            for i in range(spatial_dim)
+        ]
+        for constraint in range(k)
+    ]
+
+    v_new, z_new = dynamic_wfr_relaxed._project_affine_hi_dim(
+        p, v, z, H[:, time_step_num], dHdt, gradH, Fprime, dx
+    )
+
+    # torch.testing.assert_close(v_new, torch.zeros(grid_shape + (n,)))
+    torch.testing.assert_close(z_new, torch.zeros(grid_shape))
+
+
+def test_project_affine_hi_dim_constantmass():
+    """Pass a random v, z and enforce the constraint rho_t(omega) = 1, that is, H=1, F=1.
+    We expect the inner product between p and z to be zero (= net mass change is zero).
+    """
+    k = 1
+    time_step_num = 7
+    T = 100
+    N1 = 31
+    N2 = 57
+    grid_shape = (N1, N2)
+    n = len(grid_shape)
+    p = torch.abs(torch.randn(grid_shape))
+    v = torch.randn(grid_shape + (n,))
+    z = torch.randn(grid_shape)
+    H = torch.ones((k,) + (T + 1,) + grid_shape)
+    F = torch.ones((k,) + (T + 1,))
+    dx = [1 / s for s in grid_shape]
+    spatial_dim = len(dx)
+    # Forward difference in time
+    Fprime = T * (torch.roll(F, -1, 1) - F)
+    Fprime = Fprime[:, time_step_num]
+
+    # Forward difference in time
+    dHdt = T * (torch.roll(H, -1, 1) - H)
+    dHdt = dHdt[:, time_step_num]
+
+    # Central difference in space
+    gradH = [
+        [
+            (
+                torch.roll(H[constraint, time_step_num], -1, i)
+                - torch.roll(H[constraint, time_step_num], 1, i)
+            )
+            / (2 * dx[i])
+            for i in range(spatial_dim)
+        ]
+        for constraint in range(k)
+    ]
+
+    v_new, z_new = dynamic_wfr_relaxed._project_affine_hi_dim(
+        p, v, z, H[:, time_step_num], dHdt, gradH, Fprime, dx
+    )
+
+    torch.testing.assert_close(v_new, v)
+    torch.testing.assert_close(
+        (z_new * p).sum(), torch.tensor(0.0), atol=1e-4, rtol=1e-4
+    )
+
+
 """
 Test of _div_plus_pz_grid
 """
@@ -185,7 +339,7 @@ def test_div_plus_pz_grid_sintime():
     N1 = 20
     p = -torch.ones(N1)
     xs = torch.arange(0, 2 * math.pi, 2 * math.pi / N1).reshape(1, -1, 1)
-    ts = torch.arange(0, (T - 1) / T, 1.0 / T).reshape(-1, 1, 1)
+    ts = torch.arange(0, T - 1).reshape(-1, 1, 1) / T
     xsts = xs - ts
     v = torch.sin(xsts)
     dx = [2 * math.pi / N1]
@@ -321,6 +475,35 @@ def test_wfr_grid_scipy_samedist_constrained():
     T = 131
     H = np.zeros((T + 1, 10, 10))
     F = np.zeros((T + 1,))
+
+    wfr, p, v, z = dynamic_wfr_relaxed.wfr_grid_scipy(
+        p1, p2, delta, rel=rel, T=T, H=H, F=F
+    )
+    p_objective = np.ones((T + 1, 10, 10))
+    v_objective = np.zeros((T, 10, 10, 2))
+    z_objective = np.zeros((T, 10, 10))
+
+    np.testing.assert_allclose(wfr, np.array(0.0))
+    np.testing.assert_allclose(p, p_objective)
+    np.testing.assert_allclose(v, v_objective)
+    np.testing.assert_allclose(z, z_objective)
+
+
+def test_wfr_grid_scipy_samedist_constrained_hidim():
+    # p1=p2=uniform. expected = no error, wfr=0, p=1, v=z=0.
+    # To test _projec_affine_hi_dim, we need to pass H and F with an additional dimension
+    p1 = np.ones((10, 10))
+    p2 = p1
+    delta = 1
+    rel = 1
+    T = 131
+    H = np.ones((1, T + 1, 10, 10))
+    F = np.ones(
+        (
+            1,
+            T + 1,
+        )
+    )
 
     wfr, p, v, z = dynamic_wfr_relaxed.wfr_grid_scipy(
         p1, p2, delta, rel=rel, T=T, H=H, F=F

@@ -303,7 +303,6 @@ def _project_affine_hi_dim(
         )
     c = torch.stack(c)
     b = torch.stack(b)
-
     # Scale c and b by the norm of c to avoid instability
     # c_norm = torch.norm(c)
     # c = c / c_norm
@@ -311,6 +310,7 @@ def _project_affine_hi_dim(
     # Use the formula proj(x) = x - C^T(C C^T)^-1(Cx-b)
     x = torch.cat([v.flatten(), z.flatten()])
     c_ct = c @ c.t()
+
     # raise error if c_ct is not invertible
     try:
         c_ct_inv = torch.inverse(c_ct)

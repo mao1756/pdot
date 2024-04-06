@@ -1,9 +1,11 @@
 import torch
 import numpy as np
+import scipy as sp
 import pytest
 import relaxed.dynamic_wfr_relaxed as dynamic_wfr_relaxed
 import math
 import random
+
 
 """
 Test of _WFR_energy
@@ -530,3 +532,31 @@ def test_wfr_grid_scipy_wrong_initial_cond():
 
     with pytest.raises(TypeError):
         dynamic_wfr_relaxed.wfr_grid_scipy(p1, p2, delta, rel=rel, T=T, v0=v0, z0=z0)
+
+
+def test_wfr_grid_scipy_constantmass_hidim():
+    """
+    Test the case where the mass is constant in time and space. We test H and F with
+    /without the extra dimension to test if the behaviors are different. Essentially
+    it is a test of the _project_affine_hi_dim function.
+    """
+    T = 50
+    N = 20
+    p1 = sp.stats.vonmises.pdf(np.linspace(0, 2 * np.pi, N), 1)
+    p2 = np.roll(p1, 10)
+    delta = 1
+    rel = 100
+    H = np.ones((1, T + 1, N))
+    F = np.ones((1, T + 1))
+
+    wfr_hidim, p_hidim, v_hidim, z_hidim = dynamic_wfr_relaxed.wfr_grid_scipy(
+        p1, p2, delta, rel=rel, T=T, H=H, F=F
+    )
+
+    wfr, p, v, z = dynamic_wfr_relaxed.wfr_grid_scipy(
+        p1, p2, delta, rel=rel, T=T, H=H.squeeze(), F=F.squeeze()
+    )
+    np.testing.assert_allclose(wfr, wfr_hidim)
+    np.testing.assert_allclose(p, p_hidim)
+    np.testing.assert_allclose(v, v_hidim)
+    np.testing.assert_allclose(z, z_hidim)

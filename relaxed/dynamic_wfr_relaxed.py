@@ -71,7 +71,7 @@ def _calculate_derivatives(
         Fprime = T * (np.roll(F, -1) - F)
         Fprime_torch = torch.from_numpy(Fprime)
         # Forward difference in time
-        dHdt = T * (np.roll(H, -1, 0) - H)
+        dHdt = T * (np.roll(H, -1, 1) - H)
         dHdt_torch = torch.from_numpy(dHdt)
         # Central difference in space
         gradH = [
@@ -179,7 +179,6 @@ def _project_affine(
     equation, we have
 
     int (grad H * v + Hz)pdx = F'-int (dH/dt)pdx
-
 
     for all t (We assume some regularity on p, v, z, h and f). This function projects v,z
     to the affine space defined by the equation above.
@@ -303,23 +302,20 @@ def _project_affine_hi_dim(
         )
     c = torch.stack(c)
     b = torch.stack(b)
-    # Scale c and b by the norm of c to avoid instability
-    # c_norm = torch.norm(c)
-    # c = c / c_norm
-    # b = b / c_norm
     # Use the formula proj(x) = x - C^T(C C^T)^-1(Cx-b)
     x = torch.cat([v.flatten(), z.flatten()])
-    c_ct = c @ c.t()
+    c_ct = c @ c.t() * math.prod(dx)
 
     # raise error if c_ct is not invertible
     try:
-        c_ct_inv = torch.inverse(c_ct)
-    except torch.linalg.LinAlgError:
+        # c_ct_inv = torch.inverse(c_ct)
+        c_ct_inv_cx = torch.linalg.solve(c_ct, c @ x * math.prod(dx) - b)
+    except RuntimeError:
         raise ValueError(
             "The matrix C C^T is not invertible. The constraints are not \
                          linearly independent. We cannot project to the affine space."
         )
-    c_ct_inv_cx = c_ct_inv @ (c @ x - b)
+    # c_ct_inv_cx = c_ct_inv @ (c @ x * math.prod(dx) - b)
     proj = x - c.t() @ c_ct_inv_cx
 
     v_new = proj[: math.prod(v.shape)].reshape(v.shape)
@@ -416,7 +412,6 @@ def _batch_project_affine(
     else:
         new_v = v
         new_z = z
-
     return new_v, new_z
 
 
@@ -530,6 +525,9 @@ def _div_plus_pz_grid(
     else:
         _v = v[time_step_num]
         _z = z[time_step_num]
+
+    # print("v", _v)
+    # print("z", _z)
 
     if scheme == "central":
         # pre_div represents the list of (pv_i(t, ...x_i+dx_i...)-pv_i(t, ...x_i-dx_i...))

@@ -743,7 +743,7 @@ def wfr_grid_scipy(
         p1 (np.ndarray): The discretized density to calculate the distance between \
         p2. The size of p1 and p2 implicitly defines the size of the grid. \
         We note that p1, p2 are assumed to be a DENSITY, that is, \
-        (p1.sum())*math.prod(dx)=1.
+        (p1.sum())*math.prod(dx) is the amount of total mass.
 
         p1 (np.ndarray): The discretized density to calculate the distance between \
         p2. The size of p1 and p2 implicitly defines the size of the grid.
@@ -897,8 +897,13 @@ def wfr_grid_scipy(
         )
 
         # Absolute value on p to avoid divergence to negative infinity
-        loss = _WFR_energy(torch.abs(_p[:-1]), _v, _z, delta) + rel * torch.norm(
-            _p[-1] - p2_torch
+        loss = (
+            (
+                _WFR_energy(torch.abs(_p[:-1]), _v, _z, delta)
+                + rel * torch.norm(_p[-1] - p2_torch) ** 2
+            )
+            * math.prod(dx)
+            * (1.0 / T)
         )
         return loss
 

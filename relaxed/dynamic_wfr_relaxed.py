@@ -7,7 +7,7 @@ import math
 
 
 def _calculate_derivatives(
-    H: np.ndarray, F: np.ndarray, dx: list, T: int, spatial_shape: tuple
+    H: np.ndarray, F: np.ndarray, dx: list, T: int, spatial_shape: tuple, device: str
 ):
     """Calculates the derivatives of the H function and the F function.
 
@@ -42,21 +42,21 @@ def _calculate_derivatives(
         if F.shape != (T + 1,):
             raise TypeError("The shape of F should be (T+1,)")
 
-        H_torch = torch.from_numpy(H)
+        H_torch = torch.from_numpy(H).to(device)
         # Forward difference in time
         Fprime = T * (np.roll(F, -1) - F)
-        Fprime_torch = torch.from_numpy(Fprime)
+        Fprime_torch = torch.from_numpy(Fprime).to(device)
 
         # Forward difference in time
         dHdt = T * (np.roll(H, -1, 0) - H)
-        dHdt_torch = torch.from_numpy(dHdt)
+        dHdt_torch = torch.from_numpy(dHdt).to(device)
 
         # Central difference in space
         gradH = [
             (np.roll(H, -1, i + 1) - np.roll(H, 1, i + 1)) / (2 * dx[i])
             for i in range(spatial_dim)
         ]
-        gradH_torch = [torch.from_numpy(component) for component in gradH]
+        gradH_torch = [torch.from_numpy(component).to(device) for component in gradH]
 
     if len(H.shape) == spatial_dim + 2:  # muliple constraints
         k = H.shape[0]
@@ -66,13 +66,13 @@ def _calculate_derivatives(
             raise TypeError("The spatial shape of H does not match p1.shape")
         if F.shape != (k, T + 1):
             raise TypeError("The shape of F should be (H.shape[0], T+1)")
-        H_torch = torch.from_numpy(H)
+        H_torch = torch.from_numpy(H).to(device)
         # Forward difference in time
         Fprime = T * (np.roll(F, -1) - F)
-        Fprime_torch = torch.from_numpy(Fprime)
+        Fprime_torch = torch.from_numpy(Fprime).to(device)
         # Forward difference in time
         dHdt = T * (np.roll(H, -1, 1) - H)
-        dHdt_torch = torch.from_numpy(dHdt)
+        dHdt_torch = torch.from_numpy(dHdt).to(device)
         # Central difference in space
         gradH = [
             [
@@ -83,7 +83,7 @@ def _calculate_derivatives(
             for constraint in range(k)
         ]
         gradH_torch = [
-            [torch.from_numpy(component) for component in gradH[constraint]]
+            [torch.from_numpy(component).to(device) for component in gradH[constraint]]
             for constraint in range(k)
         ]
 
@@ -211,12 +211,14 @@ def _project_affine(
     All of the functions are assumed to be evaluated at the same time.
     """
 
+    dx_torch = torch.tensor(math.prod(dx)).to(p.device)
+
     c1 = torch.stack([p * gradH_component for gradH_component in gradH], dim=-1)
     c2 = p * H
-    b = Fprime - (dHdt * p).sum() * math.prod(dx)
+    b = Fprime - (dHdt * p).sum() * dx_torch
 
-    cdotx = ((c1 * v).sum() + (c2 * z).sum()) * math.prod(dx)
-    c_norm_sq = (torch.norm(c1) ** 2 + torch.norm(c2) ** 2) * math.prod(dx)
+    cdotx = ((c1 * v).sum() + (c2 * z).sum()) * dx_torch
+    c_norm_sq = (torch.norm(c1) ** 2 + torch.norm(c2) ** 2) * dx_torch
 
     if c_norm_sq == 0:
         v_new = v
@@ -852,7 +854,7 @@ def wfr_grid_scipy(
     # Constraint initialization
     if H is not None and F is not None:
         H_torch, Fprime_torch, dHdt_torch, gradH_torch = _calculate_derivatives(
-            H, F, dx, T, p1.shape
+            H, F, dx, T, p1.shape, torch_device
         )
     else:
         H_torch = None
@@ -888,7 +890,7 @@ def wfr_grid_scipy(
         _p = torchdiffeq.odeint(
             divpz,
             p1_torch,
-            torch.linspace(0, 1, steps=T + 1),
+            torch.linspace(0, 1, steps=T + 1).to(torch_device),
             method=solver,
         )
 
@@ -931,8 +933,8 @@ def wfr_grid_scipy(
 
     v = vz_optimal[: math.prod(v_shape)].reshape(v_shape)
     z = vz_optimal[math.prod(v_shape) :].reshape(z_shape)
-    torch_v = torch.from_numpy(v)
-    torch_z = torch.from_numpy(z)
+    torch_v = torch.from_numpy(v).to(torch_device)
+    torch_z = torch.from_numpy(z).to(torch_device)
 
     # Solve the continuity equation one last time to get the final solution
     divpz = functools.partial(
@@ -948,7 +950,10 @@ def wfr_grid_scipy(
         scheme=scheme,
     )
     torch_p = torchdiffeq.odeint(
-        divpz, p1_torch, torch.linspace(0, 1, steps=T + 1), method=solver
+        divpz,
+        p1_torch,
+        torch.linspace(0, 1, steps=T + 1).to(torch_device),
+        method=solver,
     )
 
     # Apply the constraint
@@ -959,11 +964,21 @@ def wfr_grid_scipy(
     # Calculate the WFR distance (or the square root of the optimal energy)
     prod_dx = math.prod(dx)
     dt = 1.0 / T
-    wfr = torch.sqrt(
-        0.5 * _WFR_energy(torch_p[:-1], torch_v, torch_z, delta) * prod_dx * dt
-    ).numpy()
+    wfr = (
+        torch.sqrt(
+            0.5 * _WFR_energy(torch_p[:-1], torch_v, torch_z, delta) * prod_dx * dt
+        )
+        .detach()
+        .cpu()
+        .numpy()
+    )
 
-    return float(wfr), torch_p.numpy(), torch_v.numpy(), torch_z.numpy()
+    return (
+        float(wfr),
+        torch_p.detach().cpu().numpy(),
+        torch_v.detach().cpu().numpy(),
+        torch_z.detach().cpu().numpy(),
+    )
 
 
 def wfr_grid_scipy_tunerel(

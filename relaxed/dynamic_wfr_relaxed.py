@@ -125,15 +125,6 @@ def smooth_abs(x: torch.tensor, param: float = 1.0, style: str = "softabs"):
     return abs
 
 
-def _negative_penalty(x: torch.tensor):
-    """Calculates a function that penalizes negative values.
-    It is defined as
-    f(x) = x for x>=0
-    f(x) = e^(e^(-x))-e for x<0
-    """
-    return torch.where(x >= 0, x, x**2)
-
-
 def _WFR_energy(p: torch.Tensor, v: torch.Tensor, z: torch.Tensor, delta: float):
     """Calculates the Wasserstein-Fisher-Rao energy for the path (p, v, z).
 
@@ -835,7 +826,7 @@ def wfr_grid_scipy(
 
     if torch.cuda.is_available():
         torch_device = "cuda:0"
-        # print("Using GPU")
+        print("Using GPU")
     else:
         torch_device = "cpu"
 
@@ -910,7 +901,7 @@ def wfr_grid_scipy(
         # Absolute value on p to avoid divergence to negative infinity
         loss = (
             (
-                _WFR_energy(_negative_penalty(_p[:-1]), _v, _z, delta)
+                _WFR_energy(torch.abs(_p[:-1]), _v, _z, delta)
                 + rel * torch.norm(_p[-1] - p2_torch) ** 2
             )
             * math.prod(dx)

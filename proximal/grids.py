@@ -43,9 +43,42 @@ class Var:
             self.D[k] /= s ** (self.N - 2)
         self.Z /= s ** (self.N - 1)
 
+    def __add__(self, other):
+        """Add two variables."""
+        assert self.cs == other.cs
+        assert self.ll == other.ll
+        return Var(
+            self.N,
+            self.cs,
+            self.ll,
+            [self.D[k] + other.D[k] for k in range(self.N)],
+            self.Z + other.Z,
+        )
+
+    def __iadd__(self, other):
+        """In-place addition of two variables."""
+        assert self.cs == other.cs
+        assert self.ll == other.ll
+        for k in range(self.N):
+            self.D[k] += other.D[k]
+        self.Z += other.Z
+        return self
+
+    def __sub__(self, other):
+        """Subtract two variables."""
+        assert self.cs == other.cs
+        assert self.ll == other.ll
+        return Var(
+            self.N,
+            self.cs,
+            self.ll,
+            [self.D[k] - other.D[k] for k in range(self.N)],
+            self.Z - other.Z,
+        )
+
 
 class Cvar(Var):
-    """A class for centered variables.
+    """A class for centered variales.
 
     Attributes:
         cs (tuple) : The size of the centered grid. cs[0] is the size of time dimension\
@@ -148,11 +181,19 @@ class Svar(Var):
 
 
 class CSvar:
-    def __init__(self, rho0, rho1, T: int, ll: tuple):
+    def __init__(self, rho0, rho1, T: int, ll: tuple, U: Svar = None, V: Cvar = None):
         self.cs = (T,) + rho0.shape
         self.ll = ll
-        self.U = Svar(rho0, rho1, T, ll)
-        self.V = interp(self.U)
+        # Initialize U and V
+        if U is None:
+            self.U = Svar(rho0, rho1, T, ll)
+        else:
+            self.U = U
+        if V is None:
+            self.V = interp(self.U)
+        else:
+            self.V = V
+        self.nx = get_backend_ext([rho0, rho1])
 
     def interp_(self):
         """Interpolate U to V in-place."""
@@ -190,6 +231,52 @@ class CSvar:
         ∫∫ (1/p) |ω|^p/rho^(p-1) + s^p (1/q) |ζ|^q/rho^(q-1).
         """
         return self.V.energy(delta, p, q)
+
+    def __add__(self, other: "CSvar"):
+        """Add two variables."""
+        assert self.cs == other.cs
+        assert self.ll == other.ll
+        place_holder = CSvar(
+            self.U.rho0, self.U.rho1, self.U.cs[0], self.U.ll, self.U, self.V
+        )
+        place_holder.U += other.U
+        place_holder.V += other.V
+        return place_holder
+
+    def __iadd__(self, other: "CSvar"):
+        """In-place addition of two variables."""
+        assert self.cs == other.cs
+        assert self.ll == other.ll
+        self.U += other.U
+        self.V += other.V
+        return self
+
+    def __sub__(self, other: "CSvar"):
+        """Subtract two variables."""
+        assert self.cs == other.cs
+        assert self.ll == other.ll
+        place_holder = CSvar(
+            self.U.rho0, self.U.rho1, self.U.cs[0], self.U.ll, self.U, self.V
+        )
+        place_holder.U = self.U - other.U
+        place_holder.V = self.V - other.V
+        return place_holder
+
+    def __mul__(self, other: float):
+        """Multiply a variable by a scalar."""
+        if isinstance(other, (int, float)):
+            place_holder = CSvar(
+                self.U.rho0, self.U.rho1, self.U.cs[0], self.U.ll, self.U, self.V
+            )
+            place_holder.U = self.U * other
+            place_holder.V = self.V * other
+            return place_holder
+        else:
+            raise ValueError("Multiplication not supported for the given type.")
+
+    def __rmul__(self, other: float):
+        """Multiply a variable by a scalar."""
+        return self.__mul__(other)
 
 
 def linear_interpolation(r0, r1, T: int):

@@ -121,36 +121,38 @@ def poisson_(f, ll, source, nx: Backend):
         f = nx.idct(f, axis=axe, norm="ortho")
 
 
-def minus_interior(dest, M, dpk, cs, dim):
-    """Code from ChatGPT
-    # Handle the index adjustment similar to _minus_interior! in Julia
-    # Assuming dpk is calculated for the 'dim' dimension
-    # Adjusts data in 'dest' based on dpk and dimension 'dim'
-    for i in range(1, cs[dim]):
-        slices = [
-            slice(None)
-        ] * M.ndim  # Create a list of slice(None) for all dimensions
-        slices[dim] = slice(
-            i, i + 1
-        )  # Select the specific slice for the current dimension
-        dpk_slices = slices.copy()
-        dpk_slices[dim] = slice(i - 1, i)  # Adjust for dpk offset
-        dest[tuple(slices)] = M[tuple(slices)] - dpk[tuple(dpk_slices)]
+def minus_interior_(dest, M, dpk, cs, dim):
+    """ Subtract dpk from the interior of a staggered variable M. Replaces dest in place.
+
+    Args:
+        dest (array): The destination array. It shoul have the same shape as M.
+        M (array): The source array. It should be defined on a staggered grid. \
+        That is, the shape should be (N0, N1, ..., N_k +1,  Nd) where k is the staggered\
+        dimension.
+        dpk (array): The array to subtract. It should have the shape\
+        (N0, N1,..., N_k-1,..., Nd).
+        cs (tuple): The size of the centered grid i.e. (N0, N1, ..., Nd).
+        dim (int): The dimension along which to subtract. k in the above description.
     """
+    assert dest.shape == M.shape, "Destination and source shapes must match"
+    interior_diff = M.take(indices=range(1, cs[dim]), axis=dim) - dpk
+    slices = [slice(None)] * M.ndim
+    slices[dim] = slice(1, cs[dim])
+    dest[tuple(slices)] = interior_diff
 
 
 def projCE(dest: grids.Svar, U: grids.Svar, source, plan="none", iplan="none"):
     assert dest.nx.all(dest.ll == U.ll), "Destination and source lengths must match"
 
-    U.projBC()
+    U.proj_BC()
     p = -U.remainder_CE()
     poisson_(p, U.ll, source, dest.nx)
 
     for k in range(len(U.cs)):
         dpk = dest.nx.diff(p, axis=k) * U.cs[k] / U.ll[k]
-        minus_interior(dest.D[k], U.D[k], dpk, U.cs, k)  # Perform index adjustment
+        minus_interior_(dest.D[k], U.D[k], dpk, U.cs, k)
 
-    U.projBC()
+    U.proj_BC()
     if source:
         dest.Z[...] = U.Z - p
 
@@ -247,23 +249,24 @@ def precomputeProjInterp(cs, nx: Backend):
         off_diag = nx.ones(n - 1)
         Q = nx.diag(off_diag, -1) + nx.diag(main_diag, 0) + nx.diag(off_diag, 1)
         Q /= 4
-        # Perform LU factorization and store the result
+        # Store the result
         B.append(Q)
     return B
 
 
 def stepDR(
-    w, x, y, z, prox1, prox2, alpha
-):  # needs fixing, in the original state from ChatGPT
-    """Apply one step of the Douglas-Rachford algorithm to the variables w, x, y, and z."""
+    w: grids.CSvar, x: grids.CSvar, y: grids.CSvar, z: grids.CSvar, prox1, prox2, alpha
+):
+    """Apply one step of the Douglas-Rachford algorithm to the variables
+    w, x, y, and z."""
     # Step 1: Update x based on z and w
-    x[:] = 2 * z - w
+    x = 2 * z - w
 
     # Step 2: Apply proximal operator 1 to x, updating y
     prox1(y, x)
 
     # Step 3: Update w with step size alpha
-    w[:] = w + alpha * (y - z)
+    w += alpha * (y - z)
 
     # Step 4: Apply proximal operator 2 to w, updating z
     prox2(z, w)
@@ -275,14 +278,14 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
 
     nx = get_backend_ext([rho0, rho1])
 
-    def prox1(y, x, rho0, rho1, source, alpha, gamma, p, q):
+    def prox1(y: grids.CSvar, x: grids.CSvar, source, gamma, p, q):
         # Apply proximal operators, assuming implementations for projCE and proxF
-        y.proj_CE(rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
+        projCE(y.U, x.U, source, plan="none", iplan="none")
         y.proxF(gamma, p, q)
 
     def prox2(y, x, Q):
         # Apply interpolation projection, assuming an implementation for projinterp
-        y.projinterp(x, Q)
+        projinterp(y, x, Q)
 
     # Adjust mass to match if not a source problem
     if q < 1.0:
@@ -304,10 +307,12 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
     # Change of variable for scale adjustment
     for var in (w, x, y, z):
         var.dilate_grid(1 / delta)
+        var.rho1 *= delta ** (var.N)
+        var.rho0 *= delta ** (var.N)
 
     # FFT plans for efficiency (not direct in NumPy, use rfft for real-input DCT)
     # Precompute projection interpolation operators if needed
-    Q = precomputeProjInterp(x.cs)  # Assuming a suitable definition exists
+    Q = precomputeProjInterp(x.cs, x.nx)  # Assuming a suitable definition exists
 
     Flist, Clist = nx.zeros(niter), nx.zeros(niter)
 

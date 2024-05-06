@@ -26,7 +26,14 @@ class NumpyBackend_ext(ob.NumpyBackend):
         return np.roll(x, shift, axis)
 
     def diff(self, x, n=1, axis=-1, prepend=None, append=None):
-        return np.diff(x, n=n, axis=axis, prepend=prepend, append=append)
+        if prepend is None and append is None:
+            return np.diff(x, n=n, axis=axis)
+        elif prepend is None:
+            return np.diff(x, n=n, axis=axis, append=append)
+        elif append is None:
+            return np.diff(x, n=n, axis=axis, prepend=prepend)
+        else:
+            return np.diff(x, n=n, axis=axis, prepend=prepend, append=append)
 
     def dct(self, x, axis=-1, norm="ortho"):
         return sp.fft.dct(x, axis=axis, norm=norm)
@@ -43,7 +50,14 @@ class TorchBackend_ext(ob.TorchBackend):
         return torch.roll(x, shift, axis)
 
     def diff(self, x, n=1, axis=-1, prepend=None, append=None):
-        return torch.diff(x, n=n, axis=axis, prepend=prepend, append=append)
+        if prepend is None and append is None:
+            return torch.diff(x, n=n, axis=axis)
+        elif prepend is None:
+            return torch.diff(x, n=n, axis=axis, append=append)
+        elif append is None:
+            return torch.diff(x, n=n, axis=axis, prepend=prepend)
+        else:
+            return torch.diff(x, n=n, axis=axis, prepend=prepend, append=append)
 
     def dct(self, x, axis=-1, norm="ortho"):
         if torch_dct:
@@ -68,10 +82,9 @@ def get_backend_ext(*args):
     # Add new functions to the backend
     if isinstance(nx, ob.NumpyBackend):
         nx = NumpyBackend_ext()
-
-    if isinstance(nx, ob.TorchBackend):
+    elif isinstance(nx, ob.TorchBackend):
         nx = TorchBackend_ext()
     else:
-        raise ValueError("Backend not supported")
+        raise ValueError(f"Backend not supported, backend={nx.__class__}")
 
     return nx

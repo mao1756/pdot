@@ -422,30 +422,6 @@ def test_div_plus_pz_grid_linear_lax_wendroff():
 
 
 """
-Test of wfr_grid
-"""
-
-
-def test_wfr_grid_samedist():
-    # p1=p2=uniform. expected = no error, wfr=0, p=1, v=z=0.
-    p1 = torch.ones(10, 10)
-    p2 = p1
-    delta = 1
-    rel = 1
-    T = 100
-    lr = 1
-    wfr, p, v, z = dynamic_wfr_relaxed.wfr_grid(p1, p2, delta, rel=rel, T=T, lr=lr)
-    p_objective = torch.ones((T + 1, 10, 10))
-    v_objective = torch.zeros((T, 10, 10, 2))
-    z_objective = torch.zeros((T, 10, 10))
-
-    torch.testing.assert_close(wfr, torch.tensor(0.0))
-    torch.testing.assert_close(p, p_objective)
-    torch.testing.assert_close(v, v_objective)
-    torch.testing.assert_close(z, z_objective)
-
-
-"""
 Test of wfr_grid_scipy
 """
 

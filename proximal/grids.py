@@ -1,6 +1,6 @@
-from backend_extension import get_backend_ext
+from proximal.backend_extension import get_backend_ext
 import numpy
-
+import math
 
 """
 todo:
@@ -24,26 +24,39 @@ class Var:
     """
 
     def __init__(self, N: int, cs: tuple, ll: tuple, D: list, Z):
+        assert len(ll) == N
+        assert len(cs) == N
+        assert Z.shape == cs
         self.N = N
         self.cs = cs
         self.ll = ll
-        self.D = D
-        self.Z = Z
-        self.nx = get_backend_ext(D + [Z])
+        self.nx = get_backend_ext(*D, Z)
+        self.D = [self.nx.copy(Dk) for Dk in D]
+        self.Z = self.nx.copy(Z)
 
     def proj_positive(self):
         """Project the density to be positive."""
-        self.D[0] = numpy.maximum(self.D[0], 0)
+        self.D[0] = self.nx.maximum(self.D[0], 0)
 
-    def dilate_grid(self, s):
-        """Apply pushforward by T:(t,x) -> (t,sx) to the variable."""
+    def dilate_grid(self, s: float):
+        """Based on Proposition 3.1 in Chizat et al. 2021, apply rescaling of the space
+        so that the new delta (the interpolating paramter) = s * delta.
+        For T:(t,x) -> (t,sx), the new variable is
+        new rho = T_* rho,
+        new omega = s T_* omega,
+        new Z = T_* Z. Here, T_* is the pushforward operator.
+
+        Args:
+            s (float) : The scaling factor.
+
+        """
         self.ll = tuple([self.ll[0]] + [self.ll[k] * s for k in range(1, self.N)])
         self.D[0] /= s ** (self.N - 1)
         for k in range(1, self.N):
             self.D[k] /= s ** (self.N - 2)
         self.Z /= s ** (self.N - 1)
 
-    def __add__(self, other):
+    def __add__(self, other: "Var"):
         """Add two variables."""
         assert self.cs == other.cs
         assert self.ll == other.ll
@@ -55,7 +68,7 @@ class Var:
             self.Z + other.Z,
         )
 
-    def __iadd__(self, other):
+    def __iadd__(self, other: "Var"):
         """In-place addition of two variables."""
         assert self.cs == other.cs
         assert self.ll == other.ll
@@ -64,7 +77,7 @@ class Var:
         self.Z += other.Z
         return self
 
-    def __sub__(self, other):
+    def __sub__(self, other: "Var"):
         """Subtract two variables."""
         assert self.cs == other.cs
         assert self.ll == other.ll
@@ -75,6 +88,23 @@ class Var:
             [self.D[k] - other.D[k] for k in range(self.N)],
             self.Z - other.Z,
         )
+
+    def __mul__(self, other: float):
+        """Multiply a variable by a scalar."""
+        if isinstance(other, (int, float)):
+            return Var(
+                self.N,
+                self.cs,
+                self.ll,
+                [self.D[k] * other for k in range(self.N)],
+                self.Z * other,
+            )
+        else:
+            raise ValueError("Multiplication not supported for the given type.")
+
+    def __rmul__(self, other: float):
+        """Multiply a variable by a scalar."""
+        return self.__mul__(other)
 
 
 class Cvar(Var):
@@ -91,7 +121,7 @@ class Cvar(Var):
         nx (module) : The backend module used for computation such as numpy or torch.
     """
 
-    def __init__(self, cs, ll, D, Z):
+    def __init__(self, cs: tuple, ll: tuple, D, Z):
         assert len(ll) == len(cs)
         assert all(Dk.shape == cs for Dk in D)
         assert Z.shape == cs
@@ -101,8 +131,8 @@ class Cvar(Var):
         """Compute the energy of the variable
         ∫∫ (1/p) |ω|^p/rho^(p-1) + s^p (1/q) |ζ|^q/rho^(q-1).
         """
-        fp = self.nx.zeros(self.cs)
-        fq = self.nx.zeros(self.cs)
+        fp = self.nx.zeros(self.cs)  # s^p (1/q) |ζ|^q/rho^(q-1)
+        fq = self.nx.zeros(self.cs)  # (1/p) |ω|^p/rho^(p-1)
         ind = self.D[0] > 0
         if q >= 1:
             fp[ind] = (
@@ -113,9 +143,12 @@ class Cvar(Var):
         if p >= 1:
             fq[ind] = (
                 (1.0 / p)
-                * self.nx.sum([self.D[k][ind] ** p for k in range(1, self.N)], axis=0)
+                * self.nx.sum(
+                    self.nx.stack([self.D[k][ind] ** p for k in range(1, self.N)]),
+                    axis=0,
+                )
             ) / (self.D[0][ind] ** (p - 1))
-        return self.nx.sum(fp + fq) * self.nx.prod(self.ll) / self.nx.prod(self.cs)
+        return self.nx.sum(fp + fq) * math.prod(self.ll) / math.prod(self.cs)
 
 
 class Svar(Var):
@@ -136,19 +169,20 @@ class Svar(Var):
         N = len(rho0.shape) + 1
         assert rho0.shape == rho1.shape
         assert len(ll) == N
-        self.rho0 = rho0
-        self.rho1 = rho1
-        nx = get_backend_ext([rho0, rho1])
+        nx = get_backend_ext(rho0, rho1)
+        self.rho0 = nx.copy(rho0)
+        self.rho1 = nx.copy(rho1)
 
         cs = (T,) + rho0.shape
         ll = ll
-        shape_before_staggered = numpy.array(self.cs)
-        shapes_staggered = [shape_before_staggered + numpy.eye(N)[k] for k in range(N)]
+        shapes_staggered = [
+            tuple((numpy.array(cs) + numpy.eye(N, dtype=int)[k])) for k in range(N)
+        ]
         D = [nx.zeros(shapes_staggered[k]) for k in range(N)]
         D[0] = linear_interpolation(
             rho0, rho1, T
         )  # Initialize density by linear interpolation
-        Z = nx.zeros(self.cs)
+        Z = nx.zeros(cs)
 
         super().__init__(N, cs, ll, D, Z)
 
@@ -182,18 +216,25 @@ class Svar(Var):
 
 class CSvar:
     def __init__(self, rho0, rho1, T: int, ll: tuple, U: Svar = None, V: Cvar = None):
+        self.nx = get_backend_ext(rho0, rho1)
         self.cs = (T,) + rho0.shape
         self.ll = ll
         # Initialize U and V
         if U is None:
             self.U = Svar(rho0, rho1, T, ll)
         else:
-            self.U = U
+            self.U = Svar(rho0, rho1, T, ll)
+            self.U.D = [self.nx.copy(U.D[k]) for k in range(U.N)]
+            self.U.Z = self.nx.copy(U.Z)
         if V is None:
             self.V = interp(self.U)
         else:
-            self.V = V
-        self.nx = get_backend_ext([rho0, rho1])
+            self.V = Cvar(
+                self.cs,
+                ll,
+                V.D,
+                V.Z,
+            )
 
     def interp_(self):
         """Interpolate U to V in-place."""
@@ -212,7 +253,7 @@ class CSvar:
         """Calculate the L2 norm of div(D) - Z."""
         return self.U.dist_from_CE()
 
-    def dilate_grid(self, s):
+    def dilate_grid(self, s: float):
         """Apply pushforward by T:(t,x) -> (t,sx) to the variable."""
         self.U.dilate_grid(s)
         self.V.dilate_grid(s)
@@ -224,7 +265,7 @@ class CSvar:
         for k in range(self.U.N):
             dist += self.U.nx.sum((intU.D[k] - self.V.D[k]) ** 2)
         dist += self.U.nx.sum((intU.Z - self.V.Z) ** 2)
-        return dist * self.U.nx.prod(self.U.ll) / self.U.nx.prod(self.U.cs)
+        return dist * math.prod(self.U.ll) / math.prod(self.U.cs)
 
     def energy(self, delta: float, p: float, q: float):
         """Compute the energy of the variable
@@ -280,16 +321,21 @@ class CSvar:
 
 
 def linear_interpolation(r0, r1, T: int):
-    nx = get_backend_ext([r0, r1])
+    """Given two densities r0 and r1, return the linear interpolation between them on a
+    time staggered grid.
+    """
+    nx = get_backend_ext(r0, r1)
     t = nx.linspace(0, 1, T + 1)
     t = t.reshape(-1, *([1] * len(r0.shape)))
     return t * r1 + (1 - t) * r0
 
 
-def interp(U: Svar):
-    V = Cvar(U.cs, U.ll, [U.nx.zeros(U.cs) for _ in range(U.N)], U.nx.zeros(U.cs))
-    interp_(V, U)
-    return V
+def interp_(V: Cvar, U: Svar):  # in-place interpolation
+    for k in range(U.N):
+        slices = [slice(None)] * U.N
+        slices[k] = slice(0, U.cs[k])
+        V.D[k][...] = ((U.D[k] + U.nx.roll(U.D[k], -1, axis=k)) / 2)[tuple(slices)]
+    V.Z[...] = U.Z
 
 
 def interpT_(U: Svar, V: Cvar):
@@ -298,17 +344,27 @@ def interpT_(U: Svar, V: Cvar):
     result in U.
     """
     for k in range(V.N):
-        dk = V.cs
+        dk = list(V.cs)
         dk[k] = 1
+        dk = tuple(dk)
+        slices = [slice(None)] * V.N
+        slices[k] = slice(0, V.cs[k] + 1)
         cat = V.nx.concatenate([V.nx.zeros(dk), V.D[k], V.nx.zeros(dk)], axis=k)
-        U.D[k] = (cat + V.nx.roll(cat, -1, axis=k)) / 2
+        U.D[k][...] = ((cat + V.nx.roll(cat, -1, axis=k)) / 2)[tuple(slices)]
     U.Z[...] = V.Z
 
 
-def interp_(V: Cvar, U: Svar):  # in-place interpolation
-    for k in range(U.N):
-        V.D[k] = (U.D[k] + U.nx.roll(U.D[k], -1, axis=k)) / 2
-    V.Z[...] = U.Z
+def interp(U: Svar):
+    V = Cvar(U.cs, U.ll, [U.nx.zeros(U.cs) for _ in range(U.N)], U.nx.zeros(U.cs))
+    interp_(V, U)
+    return V
+
+
+def interpT(V: Cvar):
+    """Apply the transpose of the interpolation operator to the variable V."""
+    U = Svar(V.D[0][0], V.D[0][-1], V.cs[0], V.ll)
+    interpT_(U, V)
+    return U
 
 
 def speed_and_growth(V: Cvar, max_ratio=100):

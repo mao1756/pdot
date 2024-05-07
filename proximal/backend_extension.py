@@ -22,6 +22,9 @@ class NumpyBackend_ext(ob.NumpyBackend):
     def __init__(self):
         super().__init__()
 
+    def cbrt(self, x):
+        return np.cbrt(x)
+
     def roll(self, x, shift, axis=None):
         return np.roll(x, shift, axis)
 
@@ -35,16 +38,28 @@ class NumpyBackend_ext(ob.NumpyBackend):
         else:
             return np.diff(x, n=n, axis=axis, prepend=prepend, append=append)
 
-    def dct(self, x, axis=-1, norm="ortho"):
+    def cos(self, x):
+        return np.cos(x)
+
+    def dct(self, x, axis=-1, norm=None):
         return sp.fft.dct(x, axis=axis, norm=norm)
 
-    def idct(self, x, axis=-1, norm="ortho"):
+    def idct(self, x, axis=-1, norm=None):
         return sp.fft.idct(x, axis=axis, norm=norm)
+
+    def dctn(self, x, axes=None, norm=None):
+        return sp.fft.dctn(x, axes=axes, norm=norm)
+
+    def idctn(self, x, axes=None, norm=None):
+        return sp.fft.idctn(x, axes=axes, norm=norm)
 
 
 class TorchBackend_ext(ob.TorchBackend):
     def __init__(self):
         super().__init__()
+
+    def cbrt(self, x):
+        return x.sign() * torch.abs(x).pow(1.0 / 3.0)
 
     def roll(self, x, shift, axis=None):
         return torch.roll(x, shift, axis)
@@ -59,7 +74,10 @@ class TorchBackend_ext(ob.TorchBackend):
         else:
             return torch.diff(x, n=n, axis=axis, prepend=prepend, append=append)
 
-    def dct(self, x, axis=-1, norm="ortho"):
+    def cos(self, x):
+        return torch.cos(x)
+
+    def dct(self, x, axis=-1, norm=None):
         if torch_dct:
             transposed = torch.transpose(x, -1, axis)
             dct_d = torch_dct.dct(transposed, norm=norm)
@@ -67,13 +85,19 @@ class TorchBackend_ext(ob.TorchBackend):
         else:
             raise ValueError("torch_dct not available")
 
-    def idct(self, x, axis=-1, norm="ortho"):
+    def idct(self, x, axis=-1, norm=None):
         if torch_dct:
             transposed = torch.transpose(x, -1, axis)
             idct_d = torch_dct.idct(transposed, norm=norm)
             return torch.transpose(idct_d, -1, axis)
         else:
             raise ValueError("torch_dct not available")
+
+    def dctn(self, x, axes=None, norm=None):
+        raise NotImplementedError
+
+    def idctn(self, x, axes=None, norm=None):
+        raise NotImplementedError
 
 
 def get_backend_ext(*args):

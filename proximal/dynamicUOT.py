@@ -1,27 +1,47 @@
-import grids
-from backend_extension import get_backend_ext
+import proximal.grids as grids
+from proximal.backend_extension import get_backend_ext
 from ot.backend import Backend
-
-# import numpy
+import math
 
 
 def root(a, b, c, d, nx: Backend):
-    """Compute the root of a cubic polynomial ax^3 + bx^2 + cx + d."""
+    """Compute the root of a cubic polynomial ax^3 + bx^2 + cx + d.
+    If a, b, c, and d are arrays, the function computes the roots elementwise.
 
+    Args:
+        a (array): The coefficient of x^3.
+        b (array): The coefficient of x^2.
+        c (array): The coefficient of x.
+        d (array): The constant term.
+        nx (module): The backend module used for computation such as numpy or torch.
+
+    """
+    assert (
+        a.shape == b.shape == c.shape == d.shape
+    ), "Coefficients must have the same shape"
+    z = nx.zeros(a.shape)
+    u = nx.zeros(a.shape)
+    v = nx.zeros(a.shape)
     # Transform coefficients
     p = -((b / a) ** 2) / 3 + c / a
     q = 2 * (b / a) ** 3 / 27 - (b * c) / (a**2) / 3 + d / a
     delta = q**2 + 4 / 27 * p**3
 
-    if delta > 0:
-        u = nx.power((-q + nx.sqrt(delta)) / 2, 1.0 / 3)
-        v = nx.power((-q - nx.sqrt(delta)) / 2, 1.0 / 3)
-        z = u + v - b / a / 3
-    elif delta < 0:
-        u = ((-q + 1j * nx.sqrt(-delta)) / 2) ** (1 / 3)
-        z = (u + u.conj() - b / a / 3).real
-    else:
-        z = (3 * q / p - b / a / 3).real()
+    id = delta > 0
+    u[id] = nx.cbrt((-q[id] + nx.sqrt(delta[id])) / 2)
+    v[id] = nx.cbrt((-q[id] - nx.sqrt(delta[id])) / 2)
+    z[id] = u[id] + v[id] - b[id] / a[id] / 3
+
+    id = delta < 0
+    u[id] = (((-q[id] + 1j * nx.sqrt(-delta[id])) / 2) ** (1 / 3)).real
+    z[id] = 2 * u[id] - b[id] / a[id] / 3
+
+    id = delta == 0
+    z[id] = nx.where(
+        q[id] == 0,
+        -b[id] / a[id] / 3,
+        3 * q[id] / p[id] - b[id] / a[id] / 3,
+    )
     return z
 
 
@@ -31,16 +51,22 @@ def mdl(M, nx: Backend):
 
 
 def proxA_(dest: grids.Cvar, M, gamma):
-    """In-place calculation of proximal operator for sum abs (M_i)"""
+    """In-place calculation of proximal operator for sum abs (M_i)
+
+    I think this is actually calculating the proximal operator for the L2 norm
+    i.e. sum abs(M_i)^2
+
+    As this operator does not affect WFR, I keep it as it is for now.
+
+    """
     softth = dest.nx.maximum(1 - gamma / mdl(M, dest.nx), 0.0)
     for k in range(len(M)):
         dest[k] = softth * M[k]
 
 
-def proxB_(destR, destM, R, M, gamma, nx: Backend):
-    """In-place calculation of proximal operator for sum |M_i|^2/R_i"""
-    mdl = nx.sqrt(sum(m**2 for m in M))
-    a = 1.0
+def proxB_(destR, destM: list, R, M: list, gamma: float, nx: Backend):
+    """In-place calculation of proximal operator for sum |M_i|^2/R_i."""
+    a = nx.ones(R.shape)
     b = 2 * gamma - R
     c = gamma**2 - 2 * gamma * R
     d = -(gamma / 2) * mdl(M, nx) ** 2 - gamma**2 * R
@@ -62,12 +88,12 @@ def proxF_(dest: grids.Cvar, V: grids.Cvar, gamma: float, p: float, q: float):
         dest.D[0][:] = V.D[0]
         proxA_(dest.D[1:], V.D[1:], gamma)
         proxA_(dest.Z, V.Z, gamma)
-    elif p == 2 and q == 2:  # WF
+    elif p == 2 and q == 2:  # WFR
         proxB_(
             dest.D[0],
-            dest.nx.concatenate((dest.D[1:], [dest.Z])),
+            dest.D[1:] + [dest.Z],
             V.D[0],
-            dest.nx.concatenate((V.D[1:], [V.Z])),
+            V.D[1:] + [V.Z],
             gamma,
             dest.nx,
         )
@@ -82,30 +108,31 @@ def proxF_(dest: grids.Cvar, V: grids.Cvar, gamma: float, p: float, q: float):
 
 
 def poisson_(f, ll, source, nx: Backend):
-    """Solve Δu+f=0(source=False) or Δu-u+f=0 with Neumann BC on the staggered grid.
+    """Solve Δu+f=0(source=False) or Δu-u+f=0 on the centered grid.
+    The BC is Neumann BC defined on the staggered
 
     f will be overwritten with the solution in-place.
 
     Args:
-        f (array): The function f.
+        f (array): The function f on the centered grid.
         ll (tuple): The length scales of the domain.
         source (bool): True if source problem.
     """
     d = f.ndim
     N = f.shape
     h = [length / n for length, n in zip(ll, N)]
-    dims = nx.ones(d)
+    dims = [1] * d
     D = nx.zeros(f.shape)
 
     for k in range(d):
-        dims[:] = 1
+        dims = [1] * d
         dims[k] = N[k]
-        dep = nx.zeros(dims, float)
+        dep = nx.zeros(tuple(dims))
         for i in range(N[k]):
             slices = [slice(None)] * d
             slices[k] = i
             slices = tuple(slices)
-            dep[slices] = (2 * nx.cos(nx.pi * i / N[k]) - 2) / h[k] ** 2
+            dep[slices] = (2 * math.cos(math.pi * i / N[k]) - 2) / h[k] ** 2
         D += dep
 
     if source:
@@ -113,19 +140,27 @@ def poisson_(f, ll, source, nx: Backend):
     else:
         D[0] = 1
 
-    renorm = nx.prod(N) * (2**d)  # I am not sure why we need this
+    # dctn
+    """
+    renorm = 1.0  # math.prod(N) * (2**d)
+    f[...] = nx.dctn(f, axes=range(d))
+    f /= -D * renorm
+    f[...] = nx.idctn(f, axes=range(d))
+    """
+    # axis wise DCT
     for axe in range(d):
-        f = nx.dct(f, axis=axe, norm="ortho")
-    f /= -D / renorm
+        f[...] = nx.dct(f, axis=axe)
+    f /= -D
     for axe in range(d):
-        f = nx.idct(f, axis=axe, norm="ortho")
+        f[...] = nx.idct(f, axis=axe)
 
 
 def minus_interior_(dest, M, dpk, cs, dim):
-    """ Subtract dpk from the interior of a staggered variable M. Replaces dest in place.
+    """ Subtract dpk from the interior of a staggered variable M and replaces the \
+        interior of dest in place by the result.
 
     Args:
-        dest (array): The destination array. It shoul have the same shape as M.
+        dest (array): The destination array. It should have the same shape as M.
         M (array): The source array. It should be defined on a staggered grid. \
         That is, the shape should be (N0, N1, ..., N_k +1,  Nd) where k is the staggered\
         dimension.
@@ -135,13 +170,23 @@ def minus_interior_(dest, M, dpk, cs, dim):
         dim (int): The dimension along which to subtract. k in the above description.
     """
     assert dest.shape == M.shape, "Destination and source shapes must match"
-    interior_diff = M.take(indices=range(1, cs[dim]), axis=dim) - dpk
     slices = [slice(None)] * M.ndim
     slices[dim] = slice(1, cs[dim])
+
+    interior_diff = M[tuple(slices)] - dpk
     dest[tuple(slices)] = interior_diff
 
 
-def projCE(dest: grids.Svar, U: grids.Svar, source, plan="none", iplan="none"):
+def projCE(dest: grids.Svar, U: grids.Svar, source):
+    """ Given a staggered variable U, project it so that it satisfies the \
+        continuity equation. The result is stored in dest in place.
+
+    Args:
+        dest (Svar): The destination variable.
+        U (Svar): The source variable.
+        source (bool): True if we are solving a OT with source problem.
+    """
+
     assert dest.nx.all(dest.ll == U.ll), "Destination and source lengths must match"
 
     U.proj_BC()
@@ -280,7 +325,7 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
 
     def prox1(y: grids.CSvar, x: grids.CSvar, source, gamma, p, q):
         # Apply proximal operators, assuming implementations for projCE and proxF
-        projCE(y.U, x.U, source, plan="none", iplan="none")
+        projCE(y.U, x.U, source)
         y.proxF(gamma, p, q)
 
     def prox2(y, x, Q):
@@ -310,7 +355,6 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
         var.rho1 *= delta ** (var.N)
         var.rho0 *= delta ** (var.N)
 
-    # FFT plans for efficiency (not direct in NumPy, use rfft for real-input DCT)
     # Precompute projection interpolation operators if needed
     Q = precomputeProjInterp(x.cs, x.nx)  # Assuming a suitable definition exists
 

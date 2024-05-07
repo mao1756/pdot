@@ -215,6 +215,18 @@ class Svar(Var):
 
 
 class CSvar:
+    """ A pair of staggered and centered variables.
+
+    Attributes:
+        nx (Backend) : The backend module used for computation such as numpy or torch.
+        cs (tuple) : The size of the centered grid. cs[0] is the size of time dimension\
+        and cs[1:] is the size of the space dimension.
+        ll (tuple) : size of time x space domain.
+        U (Svar) : The staggered variable.
+        V (Cvar) : The centered variable.
+
+    """
+
     def __init__(self, rho0, rho1, T: int, ll: tuple, U: Svar = None, V: Cvar = None):
         self.nx = get_backend_ext(rho0, rho1)
         self.cs = (T,) + rho0.shape
@@ -380,27 +392,3 @@ def speed_and_growth(V: Cvar, max_ratio=100):
     for k in range(len(V.D) - 1):
         v[k][ind] = V.D[k + 1][ind] / V.D[0][ind]
     return v, g
-
-
-""" Unused codes from ChatGPT
-def main_constructor(rho0, rho1, T, ll):
-    U = Svar(
-        (T,) + rho0.shape,
-        ll,
-        [
-            np.zeros((T + 1,) + rho0.shape + (np.eye(len(rho0.shape) + 1)[k],))
-            for k in range(len(rho0.shape) + 1)
-        ],
-        np.zeros((T,) + rho0.shape),
-    )
-    U.D[0] = linear_interpolation(rho0, rho1, T)
-    V = interp(U)
-    return CSvar(U.cs, U.ll, U, V)
-
-def diff_inplace(dest, M, dim):
-    dest[:] = np.diff(M, axis=dim)
-
-
-def diff(M, dim):
-    return np.diff(M, axis=dim)
-"""

@@ -220,3 +220,7 @@ class TestMinusInterior:
                 dtype=torch.float32,
             ),
         )
+
+
+class TestProjCE:
+    pass

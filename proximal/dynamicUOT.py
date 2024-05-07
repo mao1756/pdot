@@ -142,7 +142,7 @@ def poisson_(f, ll, source, nx: Backend):
 
     # dctn
     """
-    renorm = 1.0  # math.prod(N) * (2**d)
+    renorm =  math.prod(N) * (2**d)
     f[...] = nx.dctn(f, axes=range(d))
     f /= -D * renorm
     f[...] = nx.idctn(f, axes=range(d))
@@ -177,7 +177,7 @@ def minus_interior_(dest, M, dpk, cs, dim):
     dest[tuple(slices)] = interior_diff
 
 
-def projCE(dest: grids.Svar, U: grids.Svar, source):
+def projCE_(dest: grids.Svar, U: grids.Svar, source: bool):
     """ Given a staggered variable U, project it so that it satisfies the \
         continuity equation. The result is stored in dest in place.
 
@@ -187,7 +187,7 @@ def projCE(dest: grids.Svar, U: grids.Svar, source):
         source (bool): True if we are solving a OT with source problem.
     """
 
-    assert dest.nx.all(dest.ll == U.ll), "Destination and source lengths must match"
+    assert dest.ll == U.ll, "Destination and source lengths must match"
 
     U.proj_BC()
     p = -U.remainder_CE()
@@ -202,7 +202,7 @@ def projCE(dest: grids.Svar, U: grids.Svar, source):
         dest.Z[...] = U.Z - p
 
 
-def projinterp(dest: grids.CSvar, x: grids.CSvar, Q):
+def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q):
     """Calculate the projection of the interpolation operator for x.
 
     Given the input x=(U,V), calculate the projection of the interpolation operator by
@@ -232,7 +232,7 @@ def projinterp(dest: grids.CSvar, x: grids.CSvar, Q):
 
     # Apply inverse Q matrix operation for each dimension
     for k in range(dest.U.N):
-        invQ_mul_A(
+        invQ_mul_A_(
             dest.U.D[k], Q[k], dest.U.D[k], k + 1
         )  # k + 1 because dimensions are 1-based in Julia
 
@@ -243,7 +243,7 @@ def projinterp(dest: grids.CSvar, x: grids.CSvar, Q):
     dest.interp()
 
 
-def invQ_mul_A(dest, Q, src, dim: int, nx: Backend):
+def invQ_mul_A_(dest, Q, src, dim: int, nx: Backend):
     """Apply the inverse of Q to the input src along the specified dimension.
 
     This function modifies the array dest in-place and calculates
@@ -325,12 +325,12 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
 
     def prox1(y: grids.CSvar, x: grids.CSvar, source, gamma, p, q):
         # Apply proximal operators, assuming implementations for projCE and proxF
-        projCE(y.U, x.U, source)
+        projCE_(y.U, x.U, source)
         y.proxF(gamma, p, q)
 
     def prox2(y, x, Q):
         # Apply interpolation projection, assuming an implementation for projinterp
-        projinterp(y, x, Q)
+        projinterp_(y, x, Q)
 
     # Adjust mass to match if not a source problem
     if q < 1.0:
@@ -378,7 +378,7 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
         Clist[i] = z.dist_from_CE()
 
     # Final projection and positive density adjustment
-    projCE(z, z, source)
+    projCE_(z, z, source)
     z.proj_positive()
     z.dilate_grid(delta)  # Adjust back to original scale
     z.interp_()  # Final interpolation adjustment

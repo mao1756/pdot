@@ -3,6 +3,7 @@ import proximal.dynamicUOT as dyn
 import proximal.grids as gr
 import numpy as np
 import torch
+import julia
 
 
 class TestRoot:
@@ -189,6 +190,60 @@ class TestPoisson:
             rtol=tol,
         )
 
+    def test_posison_numpy_source_nonzero(self):
+        N_0 = 100
+        N_1 = 100
+        tol = (1 / N_0) ** 2 + (1 / N_1) ** 2
+        ll = (1.0, 1.0)
+        t = ll[0] * (np.arange(N_0) + 0.5) / N_0
+        x = ll[1] * (np.arange(N_1) + 0.5) / N_1
+        T, X = np.meshgrid(t, x)
+        f = (
+            (8 * np.pi**2 + 1)
+            * np.cos(np.pi * (2 * T - 1))
+            * np.cos(np.pi * (2 * X - 1))
+        )
+        nx = be.get_backend_ext(f)
+        dyn.poisson_(f, ll, True, nx)
+        np.testing.assert_allclose(
+            f,
+            np.cos(np.pi * (2 * T - 1)) * np.cos(np.pi * (2 * X - 1)),
+            atol=tol,
+            rtol=tol,
+        )
+
+    def test_poisson_numpy_source_nonzero_julia(self):
+        N_0 = 100
+        N_1 = 100
+        # tol = (1 / N_0) ** 2 + (1 / N_1) ** 2
+        ll = (1.0, 1.0)
+        t = ll[0] * (np.arange(N_0) + 0.5) / N_0
+        x = ll[1] * (np.arange(N_1) + 0.5) / N_1
+        T, X = np.meshgrid(t, x)
+        f = (
+            (8 * np.pi**2 + 1)
+            * np.cos(np.pi * (2 * T - 1))
+            * np.cos(np.pi * (2 * X - 1))
+        )
+        nx = be.get_backend_ext(f)
+        dyn.poisson_(f, ll, True, nx)
+
+        # Julia
+        julia.install()
+        from julia import Main
+
+        f_jl = (
+            (8 * np.pi**2 + 1)
+            * np.cos(np.pi * (2 * T - 1))
+            * np.cos(np.pi * (2 * X - 1))
+        )
+        Main.include("./tests/proximal/dynamicUOT.jl")
+        Main.eval("using DynamicUOT")
+        julia_poisson = getattr(Main, "poisson!")
+        julia_poisson(f_jl, ll, True)
+
+        np.testing.assert_allclose(f, f_jl)
+
 
 class TestMinusInterior:
     def test_minus_interior_numpy_small(self):
@@ -242,6 +297,34 @@ class TestProjCE:
         rho1 = torch.tensor([5, 6, 7, 8]).float()
         T = 5
         cs = (T, 4)
+        ll = (1.0, 1.0)
+        shapes_staggered = gr.get_staggered_shape(cs)
+        D = [torch.zeros(shapes_staggered[k]) for k in range(2)]
+        D[0] = gr.linear_interpolation(rho0, rho1, cs[0])
+        U = gr.Svar(cs, ll, D, Z=torch.zeros(cs))
+        dyn.projCE_(U, U, rho0, rho1, True)
+        torch.testing.assert_close(
+            U.remainder_CE(), torch.zeros(cs), atol=1e-5, rtol=1e-8
+        )
+
+    def test_proJCE_numpy_large(self):
+        rho0 = np.random.rand(256).astype(np.float32)
+        rho1 = np.random.rand(256).astype(np.float32)
+        T = 100
+        cs = (T, 256)
+        ll = (1.0, 1.0)
+        shapes_staggered = gr.get_staggered_shape(cs)
+        D = [np.zeros(shapes_staggered[k]) for k in range(2)]
+        D[0] = gr.linear_interpolation(rho0, rho1, cs[0])
+        U = gr.Svar(cs, ll, D, Z=np.zeros(cs))
+        dyn.projCE_(U, U, rho0, rho1, True)
+        np.testing.assert_allclose(U.remainder_CE(), 0, atol=1e-5, rtol=1e-8)
+
+    def test_projCE_torch_large(self):
+        rho0 = torch.rand(256).float()
+        rho1 = torch.rand(256).float()
+        T = 100
+        cs = (T, 256)
         ll = (1.0, 1.0)
         shapes_staggered = gr.get_staggered_shape(cs)
         D = [torch.zeros(shapes_staggered[k]) for k in range(2)]

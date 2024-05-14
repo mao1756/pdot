@@ -149,10 +149,10 @@ def poisson_(f, ll, source, nx: Backend):
     """
     # axis wise DCT
     for axe in range(d):
-        f[...] = nx.dct(f, axis=axe)
+        f[...] = nx.dct(f, axis=axe, norm="ortho")
     f /= -D
     for axe in range(d):
-        f[...] = nx.idct(f, axis=axe)
+        f[...] = nx.idct(f, axis=axe, norm="ortho")
 
 
 def minus_interior_(dest, M, dpk, cs, dim):
@@ -177,7 +177,7 @@ def minus_interior_(dest, M, dpk, cs, dim):
     dest[tuple(slices)] = interior_diff
 
 
-def projCE_(dest: grids.Svar, U: grids.Svar, rho0, rho1, source: bool):
+def projCE_(dest: grids.Svar, U: grids.Svar, rho_0, rho_1, source: bool):
     """ Given a staggered variable U, project it so that it satisfies the \
         continuity equation. The result is stored in dest in place.
 
@@ -191,7 +191,7 @@ def projCE_(dest: grids.Svar, U: grids.Svar, rho0, rho1, source: bool):
 
     assert dest.ll == U.ll, "Destination and source lengths must match"
 
-    U.proj_BC(rho0, rho1)
+    U.proj_BC(rho_0, rho_1)
     p = -U.remainder_CE()
     poisson_(p, U.ll, source, dest.nx)
 
@@ -199,7 +199,7 @@ def projCE_(dest: grids.Svar, U: grids.Svar, rho0, rho1, source: bool):
         dpk = dest.nx.diff(p, axis=k) * U.cs[k] / U.ll[k]
         minus_interior_(dest.D[k], U.D[k], dpk, U.cs, k)
 
-    dest.proj_BC(rho0, rho1)
+    dest.proj_BC(rho_0, rho_1)
     if source:
         dest.Z[...] = U.Z - p
 
@@ -327,7 +327,7 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
     nx = get_backend_ext(rho0, rho1)
 
     def prox1(y: grids.CSvar, x: grids.CSvar, source, gamma, p, q):
-        projCE_(y.U, x.U, rho0, rho1, source)
+        projCE_(y.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
         proxF_(y.V, x.V, gamma, p, q)
 
     def prox2(y, x, Q):
@@ -350,10 +350,10 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
     w, x, y, z = [grids.CSvar(rho0, rho1, T, ll) for _ in range(4)]
 
     # Change of variable for scale adjustment
-    for var in (w, x, y, z):
+    for var in [w, x, y, z]:
         var.dilate_grid(1 / delta)
-        var.rho1 *= delta ** (var.N)
-        var.rho0 *= delta ** (var.N)
+        var.rho1 *= delta**rho0.ndim
+        var.rho0 *= delta**rho0.ndim
 
     # Precompute projection interpolation operators if needed
     Q = precomputeProjInterp(x.cs, x.nx)
@@ -378,7 +378,7 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
         Clist[i] = z.dist_from_CE()
 
     # Final projection and positive density adjustment
-    projCE_(z.U, z.U, rho0, rho1, source)
+    projCE_(z.U, z.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
     z.proj_positive()
     z.dilate_grid(delta)  # Adjust back to original scale
     z.interp_()  # Final interpolation adjustment

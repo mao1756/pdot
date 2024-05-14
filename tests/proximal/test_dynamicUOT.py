@@ -1,5 +1,6 @@
 import proximal.backend_extension as be
 import proximal.dynamicUOT as dyn
+import proximal.grids as gr
 import numpy as np
 import torch
 
@@ -223,4 +224,198 @@ class TestMinusInterior:
 
 
 class TestProjCE:
-    pass
+    def test_projCE_numpy_small(self):
+        rho0 = np.array([1, 2, 3, 4]).astype(np.float32)
+        rho1 = np.array([5, 6, 7, 8]).astype(np.float32)
+        T = 5
+        cs = (T, 4)
+        ll = (1.0, 1.0)
+        shapes_staggered = gr.get_staggered_shape(cs)
+        D = [np.zeros(shapes_staggered[k]) for k in range(2)]
+        D[0] = gr.linear_interpolation(rho0, rho1, cs[0])
+        U = gr.Svar(cs, ll, D, Z=np.zeros(cs))
+        dyn.projCE_(U, U, rho0, rho1, True)
+        np.testing.assert_allclose(U.remainder_CE(), 0, atol=1e-5, rtol=1e-8)
+
+    def test_projCE_torch_small(self):
+        rho0 = torch.tensor([1, 2, 3, 4]).float()
+        rho1 = torch.tensor([5, 6, 7, 8]).float()
+        T = 5
+        cs = (T, 4)
+        ll = (1.0, 1.0)
+        shapes_staggered = gr.get_staggered_shape(cs)
+        D = [torch.zeros(shapes_staggered[k]) for k in range(2)]
+        D[0] = gr.linear_interpolation(rho0, rho1, cs[0])
+        U = gr.Svar(cs, ll, D, Z=torch.zeros(cs))
+        dyn.projCE_(U, U, rho0, rho1, True)
+        torch.testing.assert_close(
+            U.remainder_CE(), torch.zeros(cs), atol=1e-5, rtol=1e-8
+        )
+
+
+class TestInvQ_Mul_A_:
+    def test_invQ_Mul_A_numpy_small1(self):
+        src = np.array([[1, 2], [3, 4]]).astype(np.float32)
+        Q = np.array([[1, 2], [0, 1]]).astype(np.float32)
+        nx = be.get_backend_ext(src, Q)
+        dyn.invQ_mul_A_(src, Q, src, 0, nx)
+        np.testing.assert_allclose(src, np.array([[-5, -6], [3, 4]]))
+
+    def test_invQ_Mul_A_torch_small1(self):
+        src = torch.tensor([[1, 2], [3, 4]]).float()
+        Q = torch.tensor([[1, 2], [0, 1]]).float()
+        nx = be.get_backend_ext(src, Q)
+        dyn.invQ_mul_A_(src, Q, src, 0, nx)
+        torch.testing.assert_close(src, torch.tensor([[-5, -6], [3, 4]]).float())
+
+    def test_invQ_Mul_A_numpy_small2(self):
+        src = np.array([[1, 2], [3, 4]]).astype(np.float32)
+        Q = np.array([[1, 2], [0, 1]]).astype(np.float32)
+        nx = be.get_backend_ext(src, Q)
+        dyn.invQ_mul_A_(src, Q, src, 1, nx)
+        np.testing.assert_allclose(src, np.array([[-3, 2], [-5, 4]]))
+
+    def test_invQ_Mul_A_torch_small2(self):
+        src = torch.tensor([[1, 2], [3, 4]]).float()
+        Q = torch.tensor([[1, 2], [0, 1]]).float()
+        nx = be.get_backend_ext(src, Q)
+        dyn.invQ_mul_A_(src, Q, src, 1, nx)
+        torch.testing.assert_close(src, torch.tensor([[-3, 2], [-5, 4]]).float())
+
+
+class TestProjInterp_:
+    def test_projInterp_numpy_small(self):
+        rho0 = np.array([1, 2]).astype(np.float32)
+        rho1 = np.array([5, 6]).astype(np.float32)
+        T = 2
+        ll = (1.0, 1.0)
+        x = gr.CSvar(rho0, rho1, T, ll)
+        y = gr.CSvar(rho0, rho1, T, ll)
+        x.U.D[1] = np.array([[0, 2, 0], [2, 4, 0]]).astype(np.float32)
+        x.interp_()
+
+        assert x.U.N == 2
+
+        np.testing.assert_allclose(
+            x.U.D[0], np.array([[1, 2], [3, 4], [5, 6]]).astype(np.float32)
+        )
+        np.testing.assert_allclose(
+            x.V.D[0], np.array([[2, 3], [4, 5]]).astype(np.float32)
+        )
+        np.testing.assert_allclose(
+            x.V.D[1], np.array([[1, 1], [3, 2]]).astype(np.float32)
+        )
+
+        identities = [
+            np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]).astype(np.float32),
+            np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]).astype(np.float32),
+        ]
+        Q = [
+            np.array([[1, 2, 3], [0, 1, 5], [0, 0, 1]]).astype(np.float32),
+            np.array([[1, 7, 8], [0, 1, 9], [0, 0, 1]]).astype(np.float32),
+        ]
+        dyn.projinterp_(y, x, identities)
+        dyn.projinterp_(x, x, Q)
+        np.testing.assert_allclose(y.U.D[0], np.array([[2, 3.5], [6, 8], [7, 8.5]]))
+        np.testing.assert_allclose(y.U.D[1], np.array([[0.5, 3, 0.5], [3.5, 6.5, 1.0]]))
+        np.testing.assert_allclose(
+            x.U.D[0], np.array([[39, 47], [-29, -34.5], [7, 8.5]])
+        )
+        np.testing.assert_allclose(x.U.D[1], np.array([[7, -1.5, 0.5], [13, -2.5, 1]]))
+        np.testing.assert_allclose(x.U.Z, np.array([[0, 0], [0, 0]]))
+
+
+class TestPrecomputeProjectInterp:
+    def test_precompute_project_interp_numpy_small(self):
+        cs = (3, 4)
+        nx = be.get_backend_ext(np.zeros(cs))
+        Q = dyn.precomputeProjInterp(cs, nx)
+        np.testing.assert_allclose(
+            Q[0],
+            np.array(
+                [
+                    [5.0 / 4.0, 1.0 / 4.0, 0.0, 0.0],
+                    [1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0, 0.0],
+                    [0.0, 1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0],
+                    [0.0, 0.0, 1.0 / 4.0, 5.0 / 4.0],
+                ]
+            ),
+        )
+        np.testing.assert_allclose(
+            Q[1],
+            np.array(
+                [
+                    [5.0 / 4.0, 1.0 / 4.0, 0.0, 0.0, 0.0],
+                    [1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0, 0.0, 0.0],
+                    [0.0, 1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0, 0.0],
+                    [0.0, 0.0, 1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0],
+                    [0.0, 0.0, 0.0, 1.0 / 4.0, 5.0 / 4.0],
+                ]
+            ),
+        )
+
+    def test_precompute_project_interp_torch_small(self):
+        cs = (3, 4)
+        nx = be.get_backend_ext(torch.zeros(cs))
+        Q = dyn.precomputeProjInterp(cs, nx)
+        torch.testing.assert_close(
+            Q[0],
+            torch.tensor(
+                [
+                    [5.0 / 4.0, 1.0 / 4.0, 0.0, 0.0],
+                    [1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0, 0.0],
+                    [0.0, 1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0],
+                    [0.0, 0.0, 1.0 / 4.0, 5.0 / 4.0],
+                ]
+            ),
+        )
+        torch.testing.assert_close(
+            Q[1],
+            torch.tensor(
+                [
+                    [5.0 / 4.0, 1.0 / 4.0, 0.0, 0.0, 0.0],
+                    [1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0, 0.0, 0.0],
+                    [0.0, 1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0, 0.0],
+                    [0.0, 0.0, 1.0 / 4.0, 6.0 / 4.0, 1.0 / 4.0],
+                    [0.0, 0.0, 0.0, 1.0 / 4.0, 5.0 / 4.0],
+                ]
+            ),
+        )
+
+
+class TestStepDR:
+    def test_step_DR_numpy_small(self):
+        def prox1(y, x):
+            y.U.D[0][...] = 2 * x.U.D[0]
+
+        def prox2(z, w):
+            pass
+
+        rho0 = np.array([1, 2]).astype(np.float32)
+        rho1 = np.array([5, 6]).astype(np.float32)
+        T = 2
+        ll = (1.0, 1.0)
+        w, x, y, z = [gr.CSvar(rho0, rho1, T, ll) for _ in range(4)]
+        w.U.D[0] = np.array([[1, 1], [1, 1], [1, 1]]).astype(np.float32)
+        z.U.D[0] = np.array([[0, 0], [0, 0], [0, 0]]).astype(np.float32)
+
+        assert isinstance(x.U, gr.Svar)
+
+        w, x, y, z = dyn.stepDR(w, x, y, z, prox1, prox2, 1.0)
+        np.testing.assert_allclose(
+            y.U.D[0], np.array([[-2.0, -2.0], [-2.0, -2.0], [-2.0, -2.0]])
+        )
+
+
+class TestComputeGeodesic:
+
+    def test_computeGeodesic_numpy_samedist(self):
+        # rho0 = rho1, so everything should be one and the momentum should be zero
+        rho0 = np.array([1, 1, 1]).astype(np.float32)
+        rho1 = np.array([1, 1, 1]).astype(np.float32)
+        T = 5
+        ll = (1.0, 1.0)
+        z, (Flist, Clist) = dyn.computeGeodesic(rho0, rho1, T, ll)
+        np.testing.assert_allclose(z.U.D[0], np.ones((T + 1, 3)))
+        np.testing.assert_allclose(z.U.D[1], np.zeros((T, 4)))
+        np.testing.assert_allclose(z.U.Z, np.zeros((T, 3)))

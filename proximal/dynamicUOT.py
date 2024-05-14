@@ -109,7 +109,7 @@ def proxF_(dest: grids.Cvar, V: grids.Cvar, gamma: float, p: float, q: float):
 
 def poisson_(f, ll, source, nx: Backend):
     """Solve Δu+f=0(source=False) or Δu-u+f=0 on the centered grid.
-    The BC is Neumann BC defined on the staggered
+    The BC is Neumann BC defined on the staggered grid.
 
     f will be overwritten with the solution in-place.
 
@@ -177,19 +177,21 @@ def minus_interior_(dest, M, dpk, cs, dim):
     dest[tuple(slices)] = interior_diff
 
 
-def projCE_(dest: grids.Svar, U: grids.Svar, source: bool):
+def projCE_(dest: grids.Svar, U: grids.Svar, rho0, rho1, source: bool):
     """ Given a staggered variable U, project it so that it satisfies the \
         continuity equation. The result is stored in dest in place.
 
     Args:
         dest (Svar): The destination variable.
         U (Svar): The source variable.
+        rho_0 (array): The source density.
+        rho_1 (array): The destination density.
         source (bool): True if we are solving a OT with source problem.
     """
 
     assert dest.ll == U.ll, "Destination and source lengths must match"
 
-    U.proj_BC()
+    U.proj_BC(rho0, rho1)
     p = -U.remainder_CE()
     poisson_(p, U.ll, source, dest.nx)
 
@@ -197,50 +199,9 @@ def projCE_(dest: grids.Svar, U: grids.Svar, source: bool):
         dpk = dest.nx.diff(p, axis=k) * U.cs[k] / U.ll[k]
         minus_interior_(dest.D[k], U.D[k], dpk, U.cs, k)
 
-    U.proj_BC()
+    dest.proj_BC(rho0, rho1)
     if source:
         dest.Z[...] = U.Z - p
-
-
-def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q):
-    """Calculate the projection of the interpolation operator for x.
-
-    Given the input x=(U,V), calculate the projection of the interpolation operator by
-    U' = Q^-1(U+I*V) and V' = I(U) where I is the interpolation operator.
-    Here, Q = Id+I*I. The result is stored in dest=(U',V').
-
-    Args:
-        dest (CSvar): The destination variable.
-        x (CSvar): The input variable.
-        Q (list): The tensor of Q matrices [Q1, Q2, ..., QN] where
-        Qk = Id + I^T I such that I is the interpolation matrix
-        (1/2, 1/2, .... 0)
-        (0, 1/2, 1/2, ...,0)
-        ...
-        (0, ..., 1/2, 1/2)
-        of size (x.cs[k]-1) x x.cs[k] for each dimension k.
-        We will precompute these matrices for efficiency.
-    """
-    assert dest.ll == x.ll, "Length scales must match"
-
-    # Calculate I*V and store it in U'
-    grids.interpT_(dest.U, x.V)
-
-    # Add U to I*V and store it in U'
-    for k in range(dest.U.N):
-        dest.U.D[k] += x.U.D[k]
-
-    # Apply inverse Q matrix operation for each dimension
-    for k in range(dest.U.N):
-        invQ_mul_A_(
-            dest.U.D[k], Q[k], dest.U.D[k], k + 1
-        )  # k + 1 because dimensions are 1-based in Julia
-
-    # Average source terms and assign to dest.U.Z
-    dest.U.Z = (x.U.Z + x.V.Z) / 2
-
-    # Calculate V' = I(U) and store it in V'
-    dest.interp()
 
 
 def invQ_mul_A_(dest, Q, src, dim: int, nx: Backend):
@@ -269,7 +230,7 @@ def invQ_mul_A_(dest, Q, src, dim: int, nx: Backend):
     one_d_slices = one_d_slices.reshape(dim_shape, -1)
 
     # Put the batch dimension to the first axis
-    one_d_slices = nx.transpose(one_d_slices)
+    # one_d_slices = nx.transpose(one_d_slices)
 
     # Apply the inverse of Q to each slice
     invQ_slices = nx.solve(Q, one_d_slices)
@@ -277,21 +238,61 @@ def invQ_mul_A_(dest, Q, src, dim: int, nx: Backend):
     # Reshape the result back to the original shape
     invQ_slices = invQ_slices.reshape(-1, *remaining_shape)
 
-    # Put the dimension back to the original axis.
-    # Argsort on permutation gives the inverse permutation
-    invQ_slices = nx.transpose(invQ_slices, axes=nx.argsort(new_axes))
+    # Put the dimension back to the original axis
+    inverse_axes = tuple(0 if i == dim else i + 1 - (i >= dim) for i in range(src.ndim))
+    invQ_slices = nx.transpose(invQ_slices, axes=inverse_axes)
 
     # Put the result back to the original array
     dest[...] = invQ_slices
+
+
+def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q):
+    """Calculate the projection of the interpolation operator for x.
+
+    Given the input x=(U,V), calculate the projection of the interpolation operator by
+    U' = Q^-1(U+I*V) and V' = I(U) where I is the interpolation operator.
+    Here, Q = Id+I*I. The result is stored in dest=(U',V').
+
+    Args:
+        dest (CSvar): The destination variable.
+        x (CSvar): The input variable.
+        Q (list): The tensor of Q matrices [Q1, Q2, ..., QN] where
+        Qk = Id + I^T I such that I is the interpolation matrix
+        (1/2, 1/2, .... 0)
+        (0, 1/2, 1/2, ...,0)
+        ...
+        (0, ..., 1/2, 1/2)
+        of size (x.cs[k]-1) x x.cs[k] for each dimension k.
+        We will precompute these matrices for efficiency.
+    """
+    assert dest.ll == x.ll, "Length scales must match"
+
+    x_U_copy = x.U.copy()  # Copy x.U since interpT_ will overwrite x.U if dest=x
+
+    # Calculate I*V and store it in U'
+    grids.interpT_(dest.U, x.V)
+    # Add U to I*V and store it in U'... (*)
+    dest.U += x_U_copy
+
+    # Apply inverse Q matrix operation for each dimension
+    for k in range(dest.U.N):
+        invQ_mul_A_(dest.U.D[k], Q[k], dest.U.D[k], k, dest.nx)
+
+    # Average source terms (* adds x.V.Z(moved to dest.U by interpT_) and x.U.Z, so we
+    # only need to divide by 2 here)
+    dest.U.Z *= 0.5
+
+    # Calculate V' = I(U) and store it in V'
+    dest.interp_()
 
 
 def precomputeProjInterp(cs, nx: Backend):
     B = []
     for n in cs:
         # Create a tridiagonal matrix
-        main_diag = nx.full(n, 6)
+        main_diag = nx.full((n + 1,), 6)
         main_diag[0], main_diag[-1] = 5, 5  # Adjust the first and last element
-        off_diag = nx.ones(n - 1)
+        off_diag = nx.ones(n)
         Q = nx.diag(off_diag, -1) + nx.diag(main_diag, 0) + nx.diag(off_diag, 1)
         Q /= 4
         # Store the result
@@ -316,20 +317,20 @@ def stepDR(
     # Step 4: Apply proximal operator 2 to w, updating z
     prox2(z, w)
 
+    return w, x, y, z
+
 
 def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
     assert delta > 0, "Delta must be positive"
     source = q >= 1.0  # Check if source problem
 
-    nx = get_backend_ext([rho0, rho1])
+    nx = get_backend_ext(rho0, rho1)
 
     def prox1(y: grids.CSvar, x: grids.CSvar, source, gamma, p, q):
-        # Apply proximal operators, assuming implementations for projCE and proxF
-        projCE_(y.U, x.U, source)
-        y.proxF(gamma, p, q)
+        projCE_(y.U, x.U, rho0, rho1, source)
+        proxF_(y.V, x.V, gamma, p, q)
 
     def prox2(y, x, Q):
-        # Apply interpolation projection, assuming an implementation for projinterp
         projinterp_(y, x, Q)
 
     # Adjust mass to match if not a source problem
@@ -346,8 +347,7 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
         )
 
     # Initialize using linear interpolation
-    w = grids.CSvar(rho0, rho1, T, ll)
-    x, y, z = w, w, w  # Simplified; deep copy or equivalent may be needed
+    w, x, y, z = [grids.CSvar(rho0, rho1, T, ll) for _ in range(4)]
 
     # Change of variable for scale adjustment
     for var in (w, x, y, z):
@@ -356,7 +356,7 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
         var.rho0 *= delta ** (var.N)
 
     # Precompute projection interpolation operators if needed
-    Q = precomputeProjInterp(x.cs, x.nx)  # Assuming a suitable definition exists
+    Q = precomputeProjInterp(x.cs, x.nx)
 
     Flist, Clist = nx.zeros(niter), nx.zeros(niter)
 
@@ -364,12 +364,12 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
         if i % (niter // 100) == 0:
             print(f"\rProgress: {i // (niter // 100)}%", end="")
 
-        stepDR(
+        w, x, y, z = stepDR(
             w,
             x,
             y,
             z,
-            lambda y, x: prox1(y, x, rho0, rho1, source, alpha, gamma, p, q),
+            lambda y, x: prox1(y, x, source, gamma, p, q),
             lambda y, x: prox2(y, x, Q),
             alpha,
         )
@@ -378,7 +378,7 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
         Clist[i] = z.dist_from_CE()
 
     # Final projection and positive density adjustment
-    projCE_(z, z, source)
+    projCE_(z.U, z.U, rho0, rho1, source)
     z.proj_positive()
     z.dilate_grid(delta)  # Adjust back to original scale
     z.interp_()  # Final interpolation adjustment

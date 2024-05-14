@@ -13,7 +13,7 @@ class TestVar:
         ll = tuple([random.random() for _ in range(N)])
         D = [np.random.randn(*cs) for _ in range(N)]
         Z = np.random.randn(*cs)
-        x = g.Var(N, cs, ll, D, Z)
+        x = g.Var(cs, ll, D, Z)
         x.proj_positive()
         assert np.all(x.D[0] >= 0)
         assert isinstance(x.nx, pb.NumpyBackend_ext)
@@ -24,20 +24,19 @@ class TestVar:
         ll = tuple([random.random() for _ in range(N)])
         D = [torch.randn(*cs) for _ in range(N)]
         Z = torch.randn(*cs)
-        x = g.Var(N, cs, ll, D, Z)
+        x = g.Var(cs, ll, D, Z)
         x.proj_positive()
         assert torch.all(x.D[0] >= 0)
         assert isinstance(x.nx, pb.TorchBackend_ext)
 
     def test_dilate_grid_numpy(self):
-        N = 2
         cs = (2, 2)
         ll = (1.0, 1.0)
         D0 = np.array([[1.0, 2.0], [3.0, 4.0]])
         D1 = np.array([[5.0, 6.0], [7.0, 8.0]])
         D = [D0, D1]
         Z = np.array([[9.0, 10.0], [11.0, 12.0]])
-        x = g.Var(N, cs, ll, D, Z)
+        x = g.Var(cs, ll, D, Z)
         x.dilate_grid(2.0)
         assert np.allclose(x.D[0], np.array([[0.5, 1], [1.5, 2]]))
         assert np.allclose(x.D[1], D1)
@@ -45,14 +44,13 @@ class TestVar:
         assert np.allclose(x.ll, (1.0, 2.0))
 
     def test_dilate_grid_torch(self):
-        N = 2
         cs = (2, 2)
         ll = (1.0, 1.0)
         D0 = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
         D1 = torch.tensor([[5.0, 6.0], [7.0, 8.0]])
         D = [D0, D1]
         Z = torch.tensor([[9.0, 10.0], [11.0, 12.0]])
-        x = g.Var(N, cs, ll, D, Z)
+        x = g.Var(cs, ll, D, Z)
         x.dilate_grid(2.0)
         assert torch.allclose(x.D[0], torch.tensor([[0.5, 1], [1.5, 2]]))
         assert torch.allclose(x.D[1], D1)
@@ -67,8 +65,8 @@ class TestVar:
         D1 = np.array([[5.0, 6.0], [7.0, 8.0]])
         D = [D0, D1]
         Z = np.array([[9.0, 10.0], [11.0, 12.0]])
-        x = g.Var(N, cs, ll, D, Z)
-        y = g.Var(N, cs, ll, D, Z)
+        x = g.Var(cs, ll, D, Z)
+        y = g.Var(cs, ll, D, Z)
         z = x + y
 
         assert z.N == N
@@ -86,8 +84,8 @@ class TestVar:
         D1 = torch.tensor([[5.0, 6.0], [7.0, 8.0]])
         D = [D0, D1]
         Z = torch.tensor([[9.0, 10.0], [11.0, 12.0]])
-        x = g.Var(N, cs, ll, D, Z)
-        y = g.Var(N, cs, ll, D, Z)
+        x = g.Var(cs, ll, D, Z)
+        y = g.Var(cs, ll, D, Z)
         z = x + y
 
         assert z.N == N
@@ -105,8 +103,8 @@ class TestVar:
         D1 = np.array([[5.0, 6.0], [7.0, 8.0]])
         D = [D0, D1]
         Z = np.array([[9.0, 10.0], [11.0, 12.0]])
-        x = g.Var(N, cs, ll, D, Z)
-        y = g.Var(N, cs, ll, D, Z)
+        x = g.Var(cs, ll, D, Z)
+        y = g.Var(cs, ll, D, Z)
         x += y
 
         assert x.N == N
@@ -124,8 +122,8 @@ class TestVar:
         D1 = torch.tensor([[5.0, 6.0], [7.0, 8.0]])
         D = [D0, D1]
         Z = torch.tensor([[9.0, 10.0], [11.0, 12.0]])
-        x = g.Var(N, cs, ll, D, Z)
-        y = g.Var(N, cs, ll, D, Z)
+        x = g.Var(cs, ll, D, Z)
+        y = g.Var(cs, ll, D, Z)
         x += y
 
         assert x.N == N
@@ -143,8 +141,8 @@ class TestVar:
         D1 = np.array([[5.0, 6.0], [7.0, 8.0]])
         D = [D0, D1]
         Z = np.array([[9.0, 10.0], [11.0, 12.0]])
-        x = g.Var(N, cs, ll, D, Z)
-        y = g.Var(N, cs, ll, D, Z)
+        x = g.Var(cs, ll, D, Z)
+        y = g.Var(cs, ll, D, Z)
         z = x - y
 
         assert z.N == N
@@ -162,8 +160,8 @@ class TestVar:
         D1 = torch.tensor([[5.0, 6.0], [7.0, 8.0]])
         D = [D0, D1]
         Z = torch.tensor([[9.0, 10.0], [11.0, 12.0]])
-        x = g.Var(N, cs, ll, D, Z)
-        y = g.Var(N, cs, ll, D, Z)
+        x = g.Var(cs, ll, D, Z)
+        y = g.Var(cs, ll, D, Z)
         z = x - y
 
         assert z.N == N
@@ -199,6 +197,77 @@ class TestCvar:
         )
         assert torch.allclose(x.energy(1.0, 2.0, 2.0), expected_energy)
 
+    def test_add(self):  # test for Cvar
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        D0 = np.array([[1.0, 2.0], [3.0, 4.0]])
+        D1 = np.array([[5.0, 6.0], [7.0, 8.0]])
+        D = [D0, D1]
+        Z = np.array([[9.0, 10.0], [11.0, 12.0]])
+        x = g.Cvar(cs, ll, D, Z)
+        y = g.Cvar(cs, ll, D, Z)
+        z = x + y
+
+        assert z.cs == cs
+        assert z.ll == ll
+        assert isinstance(z, g.Cvar)
+        assert np.allclose(z.D[0], 2 * D0)
+        assert np.allclose(z.D[1], 2 * D1)
+        assert np.allclose(z.Z, 2 * Z)
+
+    def test_iadd(self):  # test for Cvar
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        D0 = np.array([[1.0, 2.0], [3.0, 4.0]])
+        D1 = np.array([[5.0, 6.0], [7.0, 8.0]])
+        D = [D0, D1]
+        Z = np.array([[9.0, 10.0], [11.0, 12.0]])
+        x = g.Cvar(cs, ll, D, Z)
+        y = g.Cvar(cs, ll, D, Z)
+        x += y
+
+        assert x.cs == cs
+        assert x.ll == ll
+        assert isinstance(x, g.Cvar)
+        assert np.allclose(x.D[0], 2 * D0)
+        assert np.allclose(x.D[1], 2 * D1)
+        assert np.allclose(x.Z, 2 * Z)
+
+    def test_sub(self):  # test for Cvar
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        D0 = np.array([[1.0, 2.0], [3.0, 4.0]])
+        D1 = np.array([[5.0, 6.0], [7.0, 8.0]])
+        D = [D0, D1]
+        Z = np.array([[9.0, 10.0], [11.0, 12.0]])
+        x = g.Cvar(cs, ll, D, Z)
+        y = g.Cvar(cs, ll, D, Z)
+        z = x - y
+
+        assert z.cs == cs
+        assert z.ll == ll
+        assert isinstance(z, g.Cvar)
+        assert np.allclose(z.D[0], np.zeros(cs))
+        assert np.allclose(z.D[1], np.zeros(cs))
+        assert np.allclose(z.Z, np.zeros(cs))
+
+    def test_mul(self):
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        D0 = np.array([[1.0, 2.0], [3.0, 4.0]])
+        D1 = np.array([[5.0, 6.0], [7.0, 8.0]])
+        D = [D0, D1]
+        Z = np.array([[9.0, 10.0], [11.0, 12.0]])
+        x = g.Cvar(cs, ll, D, Z)
+        z = x * 2
+
+        assert z.cs == cs
+        assert z.ll == ll
+        assert isinstance(z, g.Cvar)
+        assert np.allclose(z.D[0], 2 * D0)
+        assert np.allclose(z.D[1], 2 * D1)
+        assert np.allclose(z.Z, 2 * Z)
+
 
 class TestSvar:
     def test_projBC_2D_numpy(self):
@@ -206,10 +275,16 @@ class TestSvar:
         ll = (1.0, 1.0)
         rho0 = np.array([1.0, 2.0])
         rho1 = np.array([5.0, 6.0])
-        x = g.Svar(rho0, rho1, cs[0], ll)
+        N = len(rho0.shape) + 1
+        shapes_staggered = g.get_staggered_shape(cs)
+        D = [np.zeros(shapes_staggered[k]) for k in range(N)]
+        D[0] = g.linear_interpolation(rho0, rho1, cs[0])
+        Z = np.zeros(cs)
+        x = g.Svar(cs, ll, D, Z)
+
         assert x.D[0].shape == (4, 2)
         assert x.D[1].shape == (3, 3)
-        x.proj_BC()
+        x.proj_BC(rho0, rho1)
         assert np.allclose(x.D[0][0], rho0)
         assert np.allclose(x.D[0][1], (2.0 / 3) * rho0 + (1.0 / 3) * rho1)
         assert np.allclose(x.D[0][-1], rho1)
@@ -222,10 +297,16 @@ class TestSvar:
         ll = (1.0, 1.0)
         rho0 = torch.tensor([1.0, 2.0])
         rho1 = torch.tensor([5.0, 6.0])
-        x = g.Svar(rho0, rho1, cs[0], ll)
+        N = len(rho0.shape) + 1
+        shapes_staggered = g.get_staggered_shape(cs)
+        D = [torch.zeros(shapes_staggered[k]) for k in range(N)]
+        D[0] = g.linear_interpolation(rho0, rho1, cs[0])
+        Z = torch.zeros(cs)
+        x = g.Svar(cs, ll, D, Z)
+
         assert x.D[0].shape == (4, 2)
         assert x.D[1].shape == (3, 3)
-        x.proj_BC()
+        x.proj_BC(rho0, rho1)
         assert torch.allclose(x.D[0][0], rho0)
         assert torch.allclose(x.D[0][1], (2.0 / 3) * rho0 + (1.0 / 3) * rho1)
         assert torch.allclose(x.D[0][-1], rho1)
@@ -237,9 +318,14 @@ class TestSvar:
         # D[1] = 0, Z = 0 or no change from initial values
         cs = (3, 2)  # a centered grid of 3 points in time, 2 points in space
         ll = (1.0, 1.0)
-        rho0 = np.array([1.0, 2.0])
-        rho1 = np.array([5.0, 6.0])
-        x = g.Svar(rho0, rho1, cs[0], ll)
+        rho0 = torch.tensor([1.0, 2.0])
+        rho1 = torch.tensor([5.0, 6.0])
+        N = len(rho0.shape) + 1
+        shapes_staggered = g.get_staggered_shape(cs)
+        D = [torch.zeros(shapes_staggered[k]) for k in range(N)]
+        D[0] = g.linear_interpolation(rho0, rho1, cs[0])
+        Z = torch.zeros(cs)
+        x = g.Svar(cs, ll, D, Z)
         np.allclose(
             x.remainder_CE(),
             np.array(
@@ -254,11 +340,16 @@ class TestSvar:
 
     def test_remainder_CE_2D_zero_torch(self):
         # D[1] = 0, Z = 0 or no change from initial values
-        cs = (3, 2)  # a centered grid of 3 points in time, 2 points in space
+        cs = (3, 2)
         ll = (1.0, 1.0)
         rho0 = torch.tensor([1.0, 2.0])
         rho1 = torch.tensor([5.0, 6.0])
-        x = g.Svar(rho0, rho1, cs[0], ll)
+        N = len(rho0.shape) + 1
+        shapes_staggered = g.get_staggered_shape(cs)
+        D = [torch.zeros(shapes_staggered[k]) for k in range(N)]
+        D[0] = g.linear_interpolation(rho0, rho1, cs[0])
+        Z = torch.zeros(cs)
+        x = g.Svar(cs, ll, D, Z)
         torch.allclose(
             x.remainder_CE(),
             torch.tensor(
@@ -268,7 +359,7 @@ class TestSvar:
                     [(15.0 - 11.0) / 3.0, (18.0 - 14.0) / 3.0],
                 ]
             )
-            * 3.0,  # 1/dt = 1/3.0
+            * 3.0,
         )
 
 
@@ -529,6 +620,100 @@ class TestFunctions:
                     [4.0 / 2.0, 5.0, 6.0 / 2.0],
                     [7.0 / 2.0, 8.0, 9.0 / 2.0],
                     [10.0 / 2.0, 11.0, 12.0 / 2.0],
+                ]
+            ),
+        )
+
+    def test_interpT_inplace_2D_numpy(self):
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        x = g.CSvar(np.array([1.0, 2.0]), np.array([5.0, 6.0]), cs[0], ll)
+
+        D0 = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+        # D1 = np.array([[0.0, 2.0, 0.0], [2.0, 4.0, 0.0]])
+        # x = g.Cvar(cs, ll, [D0, D1], np.ones(cs))
+
+        np.testing.assert_allclose(x.U.D[0], D0)
+        x.V.D[0] = np.array(
+            [
+                [2.0, 3.0],
+                [4.0, 5.0],
+            ]
+        )
+        x.V.D[1] = np.array(
+            [
+                [1.0, 1.0],
+                [3.0, 2.0],
+            ]
+        )
+
+        g.interpT_(x.U, x.V)
+
+        assert x.U.D[0].shape == (3, 2)
+        assert x.U.D[1].shape == (2, 3)
+        assert x.U.Z.shape == cs
+        np.testing.assert_allclose(
+            x.U.D[0],
+            np.array(
+                [
+                    [1.0, 3.0 / 2.0],
+                    [3.0, 4.0],
+                    [2.0, 5.0 / 2.0],
+                ]
+            ),
+        )
+        np.testing.assert_allclose(
+            x.U.D[1],
+            np.array(
+                [
+                    [0.5, 1.0, 0.5],
+                    [1.5, 2.5, 1.0],
+                ]
+            ),
+        )
+
+    def test_interpT_inplace_2D_torch(self):
+        cs = (2, 2)
+        ll = (1.0, 1.0)
+        x = g.CSvar(torch.tensor([1.0, 2.0]), torch.tensor([5.0, 6.0]), cs[0], ll)
+
+        D0 = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+
+        torch.testing.assert_allclose(x.U.D[0], D0)
+        x.V.D[0] = torch.tensor(
+            [
+                [2.0, 3.0],
+                [4.0, 5.0],
+            ]
+        )
+        x.V.D[1] = torch.tensor(
+            [
+                [1.0, 1.0],
+                [3.0, 2.0],
+            ]
+        )
+
+        g.interpT_(x.U, x.V)
+
+        assert x.U.D[0].shape == (3, 2)
+        assert x.U.D[1].shape == (2, 3)
+        assert x.U.Z.shape == cs
+        torch.testing.assert_allclose(
+            x.U.D[0],
+            torch.tensor(
+                [
+                    [1.0, 3.0 / 2.0],
+                    [3.0, 4.0],
+                    [2.0, 5.0 / 2.0],
+                ]
+            ),
+        )
+        torch.testing.assert_allclose(
+            x.U.D[1],
+            torch.tensor(
+                [
+                    [0.5, 1.0, 0.5],
+                    [1.5, 2.5, 1.0],
                 ]
             ),
         )

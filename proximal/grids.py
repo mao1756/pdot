@@ -2,12 +2,6 @@ from proximal.backend_extension import get_backend_ext
 import numpy
 import math
 
-"""
-todo:
-"roll" and "diff" does not exist on backends so we need a way to replace it.
-Done: Added roll and diff to the backend module.
-"""
-
 
 class Var:
     """Base class for variables.
@@ -19,15 +13,14 @@ class Var:
             [0, ll[N-1]].
         D (list) : The list containing the density and the momentum. D[0] is the density \
             and D[1], ...., D[N] is the momentum.
-        Z (array) : The source term of the variable.
+        Z (array-like of shape cs) : The source term of the variable.
         nx (module) : The backend module used for computation such as numpy or torch.
     """
 
-    def __init__(self, N: int, cs: tuple, ll: tuple, D: list, Z):
-        assert len(ll) == N
-        assert len(cs) == N
+    def __init__(self, cs: tuple, ll: tuple, D: list, Z):
+        self.N = len(cs)
+        assert len(ll) == self.N
         assert Z.shape == cs
-        self.N = N
         self.cs = cs
         self.ll = ll
         self.nx = get_backend_ext(*D, Z)
@@ -60,8 +53,7 @@ class Var:
         """Add two variables."""
         assert self.cs == other.cs
         assert self.ll == other.ll
-        return Var(
-            self.N,
+        return self.__class__(
             self.cs,
             self.ll,
             [self.D[k] + other.D[k] for k in range(self.N)],
@@ -81,8 +73,7 @@ class Var:
         """Subtract two variables."""
         assert self.cs == other.cs
         assert self.ll == other.ll
-        return Var(
-            self.N,
+        return self.__class__(
             self.cs,
             self.ll,
             [self.D[k] - other.D[k] for k in range(self.N)],
@@ -92,8 +83,7 @@ class Var:
     def __mul__(self, other: float):
         """Multiply a variable by a scalar."""
         if isinstance(other, (int, float)):
-            return Var(
-                self.N,
+            return self.__class__(
                 self.cs,
                 self.ll,
                 [self.D[k] * other for k in range(self.N)],
@@ -125,7 +115,7 @@ class Cvar(Var):
         assert len(ll) == len(cs)
         assert all(Dk.shape == cs for Dk in D)
         assert Z.shape == cs
-        super().__init__(len(cs), cs, ll, D, Z)
+        super().__init__(cs, ll, D, Z)
 
     def energy(self, delta: float, p: float, q: float):
         """Compute the energy of the variable
@@ -160,12 +150,12 @@ class Svar(Var):
         ll (tuple) : size of time x space domain.
         D (list) : The list containing the density and the momentum. D[0] is the density \
             and D[1], ...., D[N] is the momentum.
-        Z (array) : The source term of the variable.
-        rho0 (array) : The initial density.
-        rho1 (array) : The final density.
+        Z (array-like) : The source term of the variable.
     """
 
-    def __init__(self, rho0, rho1, T: int, ll: tuple):
+    def __init__(self, cs: tuple, ll: tuple, D: list, Z):
+        """
+         def __init__(self, rho0, rho1, T: int, ll: tuple):
         N = len(rho0.shape) + 1
         assert rho0.shape == rho1.shape
         assert len(ll) == N
@@ -183,13 +173,13 @@ class Svar(Var):
             rho0, rho1, T
         )  # Initialize density by linear interpolation
         Z = nx.zeros(cs)
+        """
+        super().__init__(cs, ll, D, Z)
 
-        super().__init__(N, cs, ll, D, Z)
-
-    def proj_BC(self):
+    def proj_BC(self, rho0, rho1):
         """Project the variable to satisfy the boundary conditions."""
-        self.D[0][0] = self.rho0
-        self.D[0][-1] = self.rho1
+        self.D[0][0] = rho0
+        self.D[0][-1] = rho1
         for k in range(1, self.N):
             slices = [slice(None)] * self.N
             slices[k] = 0
@@ -213,6 +203,10 @@ class Svar(Var):
             / self.nx.prod(self.cs)
         )
 
+    def copy(self):
+        """Return a copy of the variable."""
+        return Svar(self.cs, self.ll, self.D, self.Z)
+
 
 class CSvar:
     """ A pair of staggered and centered variables.
@@ -228,16 +222,28 @@ class CSvar:
     """
 
     def __init__(self, rho0, rho1, T: int, ll: tuple, U: Svar = None, V: Cvar = None):
+        self.N = len(rho0.shape) + 1
         self.nx = get_backend_ext(rho0, rho1)
         self.cs = (T,) + rho0.shape
         self.ll = ll
+        self.rho0 = self.nx.copy(rho0)
+        self.rho1 = self.nx.copy(rho1)
         # Initialize U and V
         if U is None:
-            self.U = Svar(rho0, rho1, T, ll)
+            N = len(rho0.shape) + 1
+            cs = (T,) + rho0.shape
+            shapes_staggered = get_staggered_shape(cs)
+            D = [self.nx.zeros(shapes_staggered[k]) for k in range(N)]
+            D[0] = linear_interpolation(rho0, rho1, T)
+            Z = self.nx.zeros(cs)
+            self.U = Svar(cs, ll, D, Z)
         else:
-            self.U = Svar(rho0, rho1, T, ll)
-            self.U.D = [self.nx.copy(U.D[k]) for k in range(U.N)]
-            self.U.Z = self.nx.copy(U.Z)
+            self.U = Svar(
+                U.cs,
+                U.ll,
+                [self.nx.copy(U.D[k]) for k in range(U.N)],
+                self.nx.copy(U.Z),
+            )
         if V is None:
             self.V = interp(self.U)
         else:
@@ -256,10 +262,6 @@ class CSvar:
         """Project the density to be positive."""
         self.U.proj_positive()
         self.V.proj_positive()
-
-    def proj_BC(self):
-        """Project the variable to satisfy the boundary conditions."""
-        self.U.proj_BC()
 
     def dist_from_CE(self):
         """Calculate the L2 norm of div(D) - Z."""
@@ -290,7 +292,7 @@ class CSvar:
         assert self.cs == other.cs
         assert self.ll == other.ll
         place_holder = CSvar(
-            self.U.rho0, self.U.rho1, self.U.cs[0], self.U.ll, self.U, self.V
+            self.rho0, self.rho1, self.U.cs[0], self.U.ll, self.U, self.V
         )
         place_holder.U += other.U
         place_holder.V += other.V
@@ -308,8 +310,9 @@ class CSvar:
         """Subtract two variables."""
         assert self.cs == other.cs
         assert self.ll == other.ll
+        assert isinstance(self.U, Svar)
         place_holder = CSvar(
-            self.U.rho0, self.U.rho1, self.U.cs[0], self.U.ll, self.U, self.V
+            self.rho0, self.rho1, self.U.cs[0], self.U.ll, self.U, self.V
         )
         place_holder.U = self.U - other.U
         place_holder.V = self.V - other.V
@@ -319,7 +322,7 @@ class CSvar:
         """Multiply a variable by a scalar."""
         if isinstance(other, (int, float)):
             place_holder = CSvar(
-                self.U.rho0, self.U.rho1, self.U.cs[0], self.U.ll, self.U, self.V
+                self.rho0, self.rho1, self.U.cs[0], self.U.ll, self.U, self.V
             )
             place_holder.U = self.U * other
             place_holder.V = self.V * other
@@ -330,6 +333,22 @@ class CSvar:
     def __rmul__(self, other: float):
         """Multiply a variable by a scalar."""
         return self.__mul__(other)
+
+
+def get_staggered_shape(cs: tuple):
+    """Given the shape of a centered grid, return the shape of the staggered grids.
+
+    Args:
+        cs (tuple) : The shape of the centered grid.
+
+    Returns:
+        list : The shape of the staggered grids.
+
+    """
+    return [
+        tuple((numpy.array(cs) + numpy.eye(len(cs), dtype=int)[k]))
+        for k in range(len(cs))
+    ]
 
 
 def linear_interpolation(r0, r1, T: int):
@@ -374,7 +393,13 @@ def interp(U: Svar):
 
 def interpT(V: Cvar):
     """Apply the transpose of the interpolation operator to the variable V."""
-    U = Svar(V.D[0][0], V.D[0][-1], V.cs[0], V.ll)
+    staggered_shape = get_staggered_shape(V.cs)
+    U = Svar(
+        V.cs,
+        V.ll,
+        [V.nx.zeros(staggered_shape[k]) for k in range(V.N)],
+        V.nx.zeros(V.cs),
+    )
     interpT_(U, V)
     return U
 

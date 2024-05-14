@@ -74,7 +74,7 @@ def proxB_(destR, destM: list, R, M: list, gamma: float, nx: Backend):
     DD = nx.zeros(R.shape)
     DD[destR > 0] = 1.0 - gamma / (gamma + destR[destR > 0])
     for k in range(len(M)):
-        destM[k] = DD * M[k]
+        destM[k][...] = DD * M[k]
 
 
 def proxF_(dest: grids.Cvar, V: grids.Cvar, gamma: float, p: float, q: float):

@@ -5,8 +5,8 @@ import math
 
 
 def root(a, b, c, d, nx: Backend):
-    """Compute the root of a cubic polynomial ax^3 + bx^2 + cx + d.
-    If a, b, c, and d are arrays, the function computes the roots elementwise.
+    """Compute the largest real root of a cubic polynomial ax^3 + bx^2 + cx + d.
+    If a, b, c, and d are arrays, the function computes the root elementwise.
 
     Args:
         a (array): The coefficient of x^3.
@@ -264,6 +264,7 @@ def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q):
         (0, ..., 1/2, 1/2)
         of size (x.cs[k]-1) x x.cs[k] for each dimension k.
         We will precompute these matrices for efficiency.
+        noV (bool): If True, only calculate U' and ignore V'.
     """
     assert dest.ll == x.ll, "Length scales must match"
 
@@ -286,18 +287,105 @@ def projinterp_(dest: grids.CSvar, x: grids.CSvar, Q):
     dest.interp_()
 
 
-def precomputeProjInterp(cs, nx: Backend):
+def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F):
+    """Calculate the projection of the interpolation and constraint operator for x.
+
+    Given the input x=(U,V), calculate the projection of interpolation&constraint
+    operator.
+    We first calculate
+    lambda = (H(Id+I^* I)^{-1}H*)^{-1}(H(Id+I^* I)^{-1}(U+I*V)-F)
+    where H is the H function for the constraint and F is the right-hand side.
+    Then, we calculate
+    U' = (Id+I^* I)^{-1}(U+I*V-H^* lambda)
+    V' = I(U) where I is the interpolation operator.
+    The result is stored in dest=(U',V').
+
+    Args:
+        dest (CSvar): The destination variable.
+        x (CSvar): The input variable.
+        Q (list): The tensor of Q matrices [Q1, Q2, ..., QN] where\
+        Qk = Id + I^T I such that I is the interpolation matrix.
+        HQH (array of shape (cs[0], cs[0])): The matrix HQ^{-1}H* where H=hI and \
+            h is the H function for the constraint.
+        H (array of shape cs): The H function for the constraint.
+        F (array of shape (cs[0],)): The right-hand side of the constraint.
+    """
+
+    projinterp_(dest, x, Q)  # Calculate U'=Q^{-1}(U+I*V) and V'=I(U)
+
+    # Calculate HU'-F=H(Id+I^* I)^{-1}(U+I*V)-F
+    pre_lambda = (
+        dest.nx.sum(H * dest.V.D[0], axis=tuple(range(1, H.ndim)))
+        * (math.prod(dest.ll[1:]) / math.prod(dest.cs[1:]))
+        - F
+    )
+
+    # Calculate lambda = (H(Id+I^* I)^{-1}H*)^{-1}(HU'-F)
+    lambda_ = dest.nx.solve(HQH, pre_lambda)
+
+    # Calculate h* lambda
+    Hstar_lambda = (
+        H
+        * lambda_[(slice(None),) + (None,) * (H.ndim - 1)]
+        * (math.prod(dest.ll[1:]) / math.prod(dest.cs[1:]))
+    )
+    # Hstar_lambda = I*(Hstar_lambda), apply the adjoint of the interpolation operator
+    dk = list(Hstar_lambda.shape)
+    dk[0] = 1
+    dk = tuple(dk)
+    slices = [slice(None)] * Hstar_lambda.ndim
+    slices[0] = slice(0, Hstar_lambda.shape[0] + 1)
+    cat = dest.nx.concatenate(
+        [dest.nx.zeros(dk), Hstar_lambda, dest.nx.zeros(dk)], axis=0
+    )
+    Hstar_lambda = ((cat + dest.nx.roll(cat, -1, axis=0)) / 2)[tuple(slices)]
+
+    # Calculate U' = Q^{-1}H^* lambda
+    invQ_mul_A_(Hstar_lambda, Q[0], Hstar_lambda, 0, dest.nx)
+
+    # Calculate U' = Q^{-1}(U+I*V)-Q^{-1}H^* lambda
+    dest.U.D[0] -= Hstar_lambda
+
+    # Calculate V' = I(U)
+    dest.interp_()
+
+
+def precomputeProjInterp(cs, rho0, rho1):
     B = []
+    nx = get_backend_ext(rho0, rho1)
     for n in cs:
         # Create a tridiagonal matrix
-        main_diag = nx.full((n + 1,), 6)
+        main_diag = nx.full((n + 1,), 6, type_as=rho0)
         main_diag[0], main_diag[-1] = 5, 5  # Adjust the first and last element
-        off_diag = nx.ones(n)
+        off_diag = nx.ones(n, type_as=rho0)
         Q = nx.diag(off_diag, -1) + nx.diag(main_diag, 0) + nx.diag(off_diag, 1)
         Q /= 4
         # Store the result
         B.append(Q)
     return B
+
+
+def precomputeHQH(Q, H, cs, ll):
+    """Precompute the matrix HQ^{-1}H* where H is the H function for the constraint
+    and Q=Id+I*I.
+
+    Args:
+        Q (array): Q = Id + I^T I such that I is the interpolation matrix
+        (1/2, 1/2, .... 0)
+        (0, 1/2, 1/2, ...,0)
+        ...
+        (0, ..., 1/2, 1/2)
+        of size T x T+1 where T is the size for the time dimension in the centered grid.
+        We will precompute these matrices for efficiency.
+        H (array): The H function for the constraint.
+        nx (module): The backend module used for computation such as numpy or torch.
+    """
+    nx = get_backend_ext(Q, H)
+    H_sum = nx.sum(H, axis=tuple(range(1, H.ndim))).reshape(-1, H.shape[0])
+    Q_inv = nx.inv(Q)
+    Q_plus_Q = Q_inv[:, :-1] + Q_inv[:, 1:]
+    IQ_plus_Q = ((Q_plus_Q + nx.roll(Q_plus_Q, -1, axis=0)) / 4)[:-1]
+    return H_sum * IQ_plus_Q * (math.prod(ll[1:]) / math.prod(cs[1:])) ** 2
 
 
 def stepDR(
@@ -320,7 +408,39 @@ def stepDR(
     return w, x, y, z
 
 
-def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
+def computeGeodesic(
+    rho0, rho1, T, ll, H=None, F=None, p=2.0, q=2.0, delta=1.0, niter=1000
+):
+    """Solve the unbalanced optimal transport problem with source using the Douglas-\
+        Rachford algorithm.
+
+    Given the source and destination densities rho0 and rho1, the cost matrix T, the \
+        length scales ll,
+    the constraint function H, and the right-hand side F, this function computes the \
+        geodesic for the
+    unbalanced optimal transport problem with source using the Douglas-Rachford algorithm.
+
+    Args:
+        rho0 (array): The source density.
+        rho1 (array): The destination density.
+        T (array): The cost matrix.
+        ll (tuple): The length scales of the domain.
+        H (array): The constraint function. If None, the algorithm will solve the \
+            standard optimal transport problem.
+        F (array): The right-hand side of the constraint. If None, the algorithm will \
+            solve the standard optimal transport problem.
+        p (float): The p-norm for the energy functional.
+        q (float): The q-norm for the energy functional.
+        delta (float): The scaling factor for the grid.
+        niter (int): The number of iterations for the algorithm.
+    
+    Returns:
+        z (CSvar): The optimal transport solution.
+        (Flist, Clist, HFlist) (tuple): The list of energy, distance from the \
+            continuity equation, and distance from the constraint function at each \
+            iteration. If H and F are None, HFlist is None.
+
+    """
     assert delta > 0, "Delta must be positive"
     source = q >= 1.0  # Check if source problem
 
@@ -330,8 +450,11 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
         projCE_(y.U, x.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
         proxF_(y.V, x.V, gamma, p, q)
 
-    def prox2(y, x, Q):
-        projinterp_(y, x, Q)
+    def prox2(y, x, Q, HQH=None, H=None, F=None):
+        if HQH is None or H is None or F is None:
+            projinterp_(y, x, Q)
+        else:
+            projinterp_constraint_(y, x, Q, HQH, H, F)
 
     # Adjust mass to match if not a source problem
     if q < 1.0:
@@ -340,7 +463,12 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
         delta = 1.0  # Ensure delta is set correctly for non-source problems
         alpha, gamma = 1.8, max(nx.max(rho0), nx.max(rho1)) / 2
     else:
-        print("Computing a geodesic for optimal transport with source...")
+        if H is None or F is None:
+            print("Computing a geodesic for optimal transport with source...")
+        else:
+            print(
+                "Computing a geodesic for optimal transport with source and constraint..."
+            )
         alpha, gamma = (
             1.8,
             delta ** (rho0.ndim - 1) * max(nx.max(rho0), nx.max(rho1)) / 15,
@@ -354,11 +482,17 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
         var.dilate_grid(1 / delta)
         var.rho1 *= delta**rho0.ndim
         var.rho0 *= delta**rho0.ndim
+    F = F * delta**rho0.ndim if F is not None else None
 
     # Precompute projection interpolation operators if needed
-    Q = precomputeProjInterp(x.cs, x.nx)
+    Q = precomputeProjInterp(x.cs, rho0, rho1)
+    HQH = precomputeHQH(Q[0], H, x.cs, x.ll) if H is not None else None
 
-    Flist, Clist = nx.zeros(niter), nx.zeros(niter)
+    Flist, Clist = (
+        nx.zeros(niter),
+        nx.zeros(niter),
+    )
+    HFlist = nx.zeros(niter) if H is not None else None
 
     for i in range(niter):
         if i % (niter // 100) == 0:
@@ -370,12 +504,14 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
             y,
             z,
             lambda y, x: prox1(y, x, source, gamma, p, q),
-            lambda y, x: prox2(y, x, Q),
+            lambda y, x: prox2(y, x, Q, HQH, H, F),
             alpha,
         )
 
         Flist[i] = z.energy(delta, p, q)
         Clist[i] = z.dist_from_CE()
+        if H is not None:
+            HFlist[i] = z.dist_from_constraint(H, F)
 
     # Final projection and positive density adjustment
     projCE_(z.U, z.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
@@ -383,5 +519,6 @@ def computeGeodesic(rho0, rho1, T, ll, p=2.0, q=2.0, delta=1.0, niter=1000):
     z.dilate_grid(delta)  # Adjust back to original scale
     z.interp_()  # Final interpolation adjustment
 
-    print("\nDone.")
-    return z, (Flist, Clist)
+    print("\nDonny.")
+
+    return z, (Flist, Clist, HFlist)

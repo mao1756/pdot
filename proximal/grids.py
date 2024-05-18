@@ -281,6 +281,15 @@ class CSvar:
         dist += self.U.nx.sum((intU.Z - self.V.Z) ** 2)
         return dist * math.prod(self.U.ll) / math.prod(self.U.cs)
 
+    def dist_from_constraint(self, H, F):
+        """Calculate the L2 norm of |HU-F|."""
+        HU = (
+            self.nx.sum(interp(self.U).D[0] * H, axis=tuple(range(1, self.U.N)))
+            * math.prod(self.U.ll[1:])
+            / math.prod(self.U.cs[1:])
+        )
+        return self.nx.sum(self.nx.abs(HU - F))
+
     def energy(self, delta: float, p: float, q: float):
         """Compute the energy of the variable
         ∫∫ (1/p) |ω|^p/rho^(p-1) + s^p (1/q) |ζ|^q/rho^(q-1).
@@ -356,7 +365,7 @@ def linear_interpolation(r0, r1, T: int):
     time staggered grid.
     """
     nx = get_backend_ext(r0, r1)
-    t = nx.linspace(0, 1, T + 1)
+    t = nx.linspace(0, 1, T + 1, type_as=r0)
     t = t.reshape(-1, *([1] * len(r0.shape)))
     return t * r1 + (1 - t) * r0
 

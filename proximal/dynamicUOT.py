@@ -19,9 +19,9 @@ def root(a, b, c, d, nx: Backend):
     assert (
         a.shape == b.shape == c.shape == d.shape
     ), "Coefficients must have the same shape"
-    z = nx.zeros(a.shape)
-    u = nx.zeros(a.shape)
-    v = nx.zeros(a.shape)
+    z = nx.zeros(a.shape, type_as=a)
+    u = nx.zeros(a.shape, type_as=a)
+    v = nx.zeros(a.shape, type_as=a)
     # Transform coefficients
     p = -((b / a) ** 2) / 3 + c / a
     q = 2 * (b / a) ** 3 / 27 - (b * c) / (a**2) / 3 + d / a
@@ -66,12 +66,13 @@ def proxA_(dest: grids.Cvar, M, gamma):
 
 def proxB_(destR, destM: list, R, M: list, gamma: float, nx: Backend):
     """In-place calculation of proximal operator for sum |M_i|^2/R_i."""
-    a = nx.ones(R.shape)
+    a = nx.ones(R.shape, type_as=R)
+    assert gamma.device == R.device, f"gamma.device={gamma.device}, R.device={R.device}"
     b = 2 * gamma - R
     c = gamma**2 - 2 * gamma * R
     d = -(gamma / 2) * mdl(M, nx) ** 2 - gamma**2 * R
     destR[...] = nx.maximum(0.0, root(a, b, c, d, nx))
-    DD = nx.zeros(R.shape)
+    DD = nx.zeros(R.shape, type_as=R)
     DD[destR > 0] = 1.0 - gamma / (gamma + destR[destR > 0])
     for k in range(len(M)):
         destM[k][...] = DD * M[k]
@@ -122,12 +123,12 @@ def poisson_(f, ll, source, nx: Backend):
     N = f.shape
     h = [length / n for length, n in zip(ll, N)]
     dims = [1] * d
-    D = nx.zeros(f.shape)
+    D = nx.zeros(f.shape, type_as=f)
 
     for k in range(d):
         dims = [1] * d
         dims[k] = N[k]
-        dep = nx.zeros(tuple(dims))
+        dep = nx.zeros(tuple(dims), type_as=f)
         for i in range(N[k]):
             slices = [slice(None)] * d
             slices[k] = i
@@ -336,7 +337,12 @@ def projinterp_constraint_(dest: grids.CSvar, x: grids.CSvar, Q, HQH, H, F):
     slices = [slice(None)] * Hstar_lambda.ndim
     slices[0] = slice(0, Hstar_lambda.shape[0] + 1)
     cat = dest.nx.concatenate(
-        [dest.nx.zeros(dk), Hstar_lambda, dest.nx.zeros(dk)], axis=0
+        [
+            dest.nx.zeros(dk, type_as=Hstar_lambda),
+            Hstar_lambda,
+            dest.nx.zeros(dk, type_as=Hstar_lambda),
+        ],
+        axis=0,
     )
     Hstar_lambda = ((cat + dest.nx.roll(cat, -1, axis=0)) / 2)[tuple(slices)]
 
@@ -433,7 +439,7 @@ def computeGeodesic(
         q (float): The q-norm for the energy functional.
         delta (float): The scaling factor for the grid.
         niter (int): The number of iterations for the algorithm.
-    
+
     Returns:
         z (CSvar): The optimal transport solution.
         (Flist, Clist, HFlist) (tuple): The list of energy, distance from the \
@@ -489,10 +495,10 @@ def computeGeodesic(
     HQH = precomputeHQH(Q[0], H, x.cs, x.ll) if H is not None else None
 
     Flist, Clist = (
-        nx.zeros(niter),
-        nx.zeros(niter),
+        nx.zeros(niter, type_as=rho0),
+        nx.zeros(niter, type_as=rho0),
     )
-    HFlist = nx.zeros(niter) if H is not None else None
+    HFlist = nx.zeros(niter, type_as=rho0) if H is not None else None
 
     for i in range(niter):
         if i % (niter // 100) == 0:
@@ -519,6 +525,6 @@ def computeGeodesic(
     z.dilate_grid(delta)  # Adjust back to original scale
     z.interp_()  # Final interpolation adjustment
 
-    print("\nDonny.")
+    print("\nDone.")
 
     return z, (Flist, Clist, HFlist)

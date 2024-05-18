@@ -121,8 +121,8 @@ class Cvar(Var):
         """Compute the energy of the variable
         ∫∫ (1/p) |ω|^p/rho^(p-1) + s^p (1/q) |ζ|^q/rho^(q-1).
         """
-        fp = self.nx.zeros(self.cs)  # s^p (1/q) |ζ|^q/rho^(q-1)
-        fq = self.nx.zeros(self.cs)  # (1/p) |ω|^p/rho^(p-1)
+        fp = self.nx.zeros(self.cs, type_as=self.D[0])  # s^p (1/q) |ζ|^q/rho^(q-1)
+        fq = self.nx.zeros(self.cs, type_as=self.D[0])  # (1/p) |ω|^p/rho^(p-1)
         ind = self.D[0] > 0
         if q >= 1:
             fp[ind] = (
@@ -199,8 +199,8 @@ class Svar(Var):
         """Calculate the L2 norm of div(D) - Z."""
         return (
             self.nx.sum(self.remainder_CE() ** 2)
-            * self.nx.prod(self.ll)
-            / self.nx.prod(self.cs)
+            * math.prod(self.ll)
+            / math.prod(self.cs)
         )
 
     def copy(self):
@@ -233,9 +233,9 @@ class CSvar:
             N = len(rho0.shape) + 1
             cs = (T,) + rho0.shape
             shapes_staggered = get_staggered_shape(cs)
-            D = [self.nx.zeros(shapes_staggered[k]) for k in range(N)]
+            D = [self.nx.zeros(shapes_staggered[k], type_as=rho0) for k in range(N)]
             D[0] = linear_interpolation(rho0, rho1, T)
-            Z = self.nx.zeros(cs)
+            Z = self.nx.zeros(cs, type_as=rho0)
             self.U = Svar(cs, ll, D, Z)
         else:
             self.U = Svar(
@@ -389,13 +389,21 @@ def interpT_(U: Svar, V: Cvar):
         dk = tuple(dk)
         slices = [slice(None)] * V.N
         slices[k] = slice(0, V.cs[k] + 1)
-        cat = V.nx.concatenate([V.nx.zeros(dk), V.D[k], V.nx.zeros(dk)], axis=k)
+        cat = V.nx.concatenate(
+            [V.nx.zeros(dk, type_as=V.D[k]), V.D[k], V.nx.zeros(dk, type_as=V.D[k])],
+            axis=k,
+        )
         U.D[k][...] = ((cat + V.nx.roll(cat, -1, axis=k)) / 2)[tuple(slices)]
     U.Z[...] = V.Z
 
 
 def interp(U: Svar):
-    V = Cvar(U.cs, U.ll, [U.nx.zeros(U.cs) for _ in range(U.N)], U.nx.zeros(U.cs))
+    V = Cvar(
+        U.cs,
+        U.ll,
+        [U.nx.zeros(U.cs, type_as=U.D[0]) for _ in range(U.N)],
+        U.nx.zeros(U.cs, type_as=U.D[0]),
+    )
     interp_(V, U)
     return V
 
@@ -406,8 +414,8 @@ def interpT(V: Cvar):
     U = Svar(
         V.cs,
         V.ll,
-        [V.nx.zeros(staggered_shape[k]) for k in range(V.N)],
-        V.nx.zeros(V.cs),
+        [V.nx.zeros(staggered_shape[k], type_as=V.D[0]) for k in range(V.N)],
+        V.nx.zeros(V.cs, type_as=V.D[0]),
     )
     interpT_(U, V)
     return U
@@ -418,10 +426,10 @@ def speed_and_growth(V: Cvar, max_ratio=100):
     If the density is too small, the result is set to zero.
     """
     ind = V.D[0] > V.nx.max(V.D[0]) / max_ratio  # indices with large enough density
-    g = V.nx.zeros(V.cs)
+    g = V.nx.zeros(V.cs, type_as=V.D[0])
     g[ind] = V.Z[ind] / V.D[0][ind]
     v = [
-        V.nx.zeros(V.cs) for _ in range(len(V.D) - 1)
+        V.nx.zeros(V.cs, type_as=V.D[0]) for _ in range(len(V.D) - 1)
     ]  # Not len(V.D) because V.D[0] is the density
     for k in range(len(V.D) - 1):
         v[k][ind] = V.D[k + 1][ind] / V.D[0][ind]

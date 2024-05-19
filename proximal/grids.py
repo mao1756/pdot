@@ -140,6 +140,10 @@ class Cvar(Var):
             ) / (self.D[0][ind] ** (p - 1))
         return self.nx.sum(fp + fq) * math.prod(self.ll) / math.prod(self.cs)
 
+    def copy(self):
+        """Return a copy of the variable."""
+        return Cvar(self.cs, self.ll, self.D, self.Z)
+
 
 class Svar(Var):
     """A class for staggered variables.
@@ -342,6 +346,17 @@ class CSvar:
     def __rmul__(self, other: float):
         """Multiply a variable by a scalar."""
         return self.__mul__(other)
+
+    def copy(self):
+        """Return a copy of the variable."""
+        return CSvar(
+            self.rho0.copy(),
+            self.rho1.copy(),
+            self.U.cs[0],
+            self.ll,
+            self.U.copy(),
+            self.V.copy(),
+        )
 
 
 def get_staggered_shape(cs: tuple):

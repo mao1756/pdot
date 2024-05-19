@@ -67,7 +67,6 @@ def proxA_(dest: grids.Cvar, M, gamma):
 def proxB_(destR, destM: list, R, M: list, gamma: float, nx: Backend):
     """In-place calculation of proximal operator for sum |M_i|^2/R_i."""
     a = nx.ones(R.shape, type_as=R)
-    assert gamma.device == R.device, f"gamma.device={gamma.device}, R.device={R.device}"
     b = 2 * gamma - R
     c = gamma**2 - 2 * gamma * R
     d = -(gamma / 2) * mdl(M, nx) ** 2 - gamma**2 * R

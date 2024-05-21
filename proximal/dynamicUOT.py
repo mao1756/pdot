@@ -493,7 +493,8 @@ def computeGeodesic(
     Q = precomputeProjInterp(x.cs, rho0, rho1)
     HQH = precomputeHQH(Q[0], H, x.cs, x.ll) if H is not None else None
 
-    Flist, Clist = (
+    Flist, Clist, Ilist = (
+        nx.zeros(niter, type_as=rho0),
         nx.zeros(niter, type_as=rho0),
         nx.zeros(niter, type_as=rho0),
     )
@@ -515,15 +516,16 @@ def computeGeodesic(
 
         Flist[i] = z.energy(delta, p, q)
         Clist[i] = z.dist_from_CE()
+        Ilist[i] = z.dist_from_interp()
         if H is not None:
             HFlist[i] = z.dist_from_constraint(H, F)
 
     # Final projection and positive density adjustment
-    projCE_(z.U, z.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
-    z.proj_positive()
+    # projCE_(z.U, z.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
+    # z.proj_positive()
     z.dilate_grid(delta)  # Adjust back to original scale
-    z.interp_()  # Final interpolation adjustment
+    # z.interp_()  # Final interpolation adjustment
 
     print("\nDone.")
 
-    return z, (Flist, Clist, HFlist)
+    return z, (Flist, Clist, Ilist, HFlist)

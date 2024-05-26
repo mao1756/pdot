@@ -26,7 +26,6 @@ def root(a, b, c, d, nx: Backend):
     p = -((b / a) ** 2) / 3 + c / a
     q = 2 * (b / a) ** 3 / 27 - (b * c) / (a**2) / 3 + d / a
     delta = q**2 + 4 / 27 * p**3
-
     id = delta > 0
     u[id] = nx.cbrt((-q[id] + nx.sqrt(delta[id])) / 2)
     v[id] = nx.cbrt((-q[id] - nx.sqrt(delta[id])) / 2)
@@ -42,6 +41,7 @@ def root(a, b, c, d, nx: Backend):
         -b[id] / a[id] / 3,
         3 * q[id] / p[id] - b[id] / a[id] / 3,
     )
+
     return z
 
 
@@ -386,7 +386,7 @@ def precomputeHQH(Q, H, cs, ll):
         nx (module): The backend module used for computation such as numpy or torch.
     """
     nx = get_backend_ext(Q, H)
-    H_sum = nx.sum(H, axis=tuple(range(1, H.ndim))).reshape(-1, H.shape[0])
+    H_sum = nx.sum(H**2, axis=tuple(range(1, H.ndim))).reshape(-1, H.shape[0])
     Q_inv = nx.inv(Q)
     Q_plus_Q = Q_inv[:, :-1] + Q_inv[:, 1:]
     IQ_plus_Q = ((Q_plus_Q + nx.roll(Q_plus_Q, -1, axis=0)) / 4)[:-1]

@@ -7,40 +7,40 @@ import torch
 
 class TestRoot:
     def test_root_numpy_positive_delta(self):
-        coeff = np.array([1, -4, 6, -24])
+        coeff = np.array([1, -4, 6, -24]).astype(np.float32)
         nx = be.get_backend_ext(coeff)
         assert np.allclose(dyn.root(*coeff, nx), np.array([4.0]))
 
     def test_root_torch_positive_delta(self):
-        coeff = torch.tensor([1, -4, 6, -24])
+        coeff = torch.tensor([1, -4, 6, -24]).float()
         nx = be.get_backend_ext(coeff)
         assert np.allclose(dyn.root(*coeff, nx), torch.tensor([4.0]))
 
     def test_root_numpy_negative_delta(self):
-        coeff = np.array([1, -5, 1, -5])
+        coeff = np.array([1, -5, 1, -5]).astype(np.float32)
         nx = be.get_backend_ext(coeff)
         assert np.allclose(dyn.root(*coeff, nx), np.array([5.0]))
 
     def test_root_torch_negative_delta(self):
-        coeff = torch.tensor([1, -5, 1, -5])
+        coeff = torch.tensor([1, -5, 1, -5]).float()
         nx = be.get_backend_ext(coeff)
         assert np.allclose(dyn.root(*coeff, nx), torch.tensor([5.0]))
 
     def test_root_numpy_zero_delta(self):
-        coeff = np.array([1, -3, 3, -1])
+        coeff = np.array([1, -3, 3, -1]).astype(np.float32)
         nx = be.get_backend_ext(coeff)
         assert np.allclose(dyn.root(*coeff, nx), np.array([1.0]))
 
     def test_root_torch_zero_delta(self):
-        coeff = torch.tensor([1, -3, 3, -1])
+        coeff = torch.tensor([1, -3, 3, -1]).float()
         nx = be.get_backend_ext(coeff)
         assert np.allclose(dyn.root(*coeff, nx), torch.tensor([1.0]))
 
     def test_root_numpy_multi_input(self):
-        a = np.array([1, 1, 1])
-        b = np.array([-4, -5, -3])
-        c = np.array([6, 1, 3])
-        d = np.array([-24, -5, -1])
+        a = np.array([1, 1, 1]).astype(np.float32)
+        b = np.array([-4, -5, -3]).astype(np.float32)
+        c = np.array([6, 1, 3]).astype(np.float32)
+        d = np.array([-24, -5, -1]).astype(np.float32)
         nx = be.get_backend_ext(a, b, c, d)
         assert np.allclose(dyn.root(a, b, c, d, nx), np.array([4.0, 5.0, 1.0]))
 
@@ -576,7 +576,7 @@ class TestComputeGeodesic:
         rho1 = np.array([1, 1, 1]).astype(np.float32)
         T = 5
         ll = (1.0, 1.0)
-        z, (Flist, Clist) = dyn.computeGeodesic(rho0, rho1, T, ll)
+        z, list = dyn.computeGeodesic(rho0, rho1, T, ll)
         np.testing.assert_allclose(z.U.D[0], np.ones((T + 1, 3)))
         np.testing.assert_allclose(z.U.D[1], np.zeros((T, 4)))
         np.testing.assert_allclose(z.U.Z, np.zeros((T, 3)))
@@ -589,7 +589,7 @@ class TestComputeGeodesic:
         ll = (1.0, 1.0)
         H = np.ones((T, 3), dtype=np.float32)
         F = np.array([1, 1, 1, 1, 1], dtype=np.float32)
-        z, (Flist, Clist, HFlist) = dyn.computeGeodesic(rho0, rho1, T, ll, H, F)
+        z, list = dyn.computeGeodesic(rho0, rho1, T, ll, H, F)
         np.testing.assert_allclose(z.U.D[0], np.ones((T + 1, 3)))
         np.testing.assert_allclose(z.U.D[1], np.zeros((T, 4)))
         np.testing.assert_allclose(z.U.Z, np.zeros((T, 3)))

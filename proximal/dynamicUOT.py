@@ -390,6 +390,13 @@ def precomputeHQH(Q, H, cs, ll):
     Q_inv = nx.inv(Q)
     Q_plus_Q = Q_inv[:, :-1] + Q_inv[:, 1:]
     IQ_plus_Q = ((Q_plus_Q + nx.roll(Q_plus_Q, -1, axis=0)) / 4)[:-1]
+    import numpy
+
+    print(
+        numpy.linalg.cond(
+            H_sum * IQ_plus_Q * (math.prod(ll[1:]) / math.prod(cs[1:])) ** 2
+        )
+    )
     return H_sum * IQ_plus_Q * (math.prod(ll[1:]) / math.prod(cs[1:])) ** 2
 
 
@@ -521,10 +528,10 @@ def computeGeodesic(
             HFlist[i] = z.dist_from_constraint(H, F)
 
     # Final projection and positive density adjustment
-    # projCE_(z.U, z.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
-    # z.proj_positive()
+    projCE_(z.U, z.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
+    z.proj_positive()
     z.dilate_grid(delta)  # Adjust back to original scale
-    # z.interp_()  # Final interpolation adjustment
+    z.interp_()  # Final interpolation adjustment
 
     print("\nDone.")
 

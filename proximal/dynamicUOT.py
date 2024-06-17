@@ -390,13 +390,6 @@ def precomputeHQH(Q, H, cs, ll):
     Q_inv = nx.inv(Q)
     Q_plus_Q = Q_inv[:, :-1] + Q_inv[:, 1:]
     IQ_plus_Q = ((Q_plus_Q + nx.roll(Q_plus_Q, -1, axis=0)) / 4)[:-1]
-    import numpy
-
-    print(
-        numpy.linalg.cond(
-            H_sum * IQ_plus_Q * (math.prod(ll[1:]) / math.prod(cs[1:])) ** 2
-        )
-    )
     return H_sum * IQ_plus_Q * (math.prod(ll[1:]) / math.prod(cs[1:])) ** 2
 
 
@@ -421,7 +414,18 @@ def stepDR(
 
 
 def computeGeodesic(
-    rho0, rho1, T, ll, H=None, F=None, p=2.0, q=2.0, delta=1.0, niter=1000
+    rho0,
+    rho1,
+    T,
+    ll,
+    H=None,
+    F=None,
+    p=2.0,
+    q=2.0,
+    delta=1.0,
+    niter=1000,
+    alpha=None,
+    gamma=None,
 ):
     """Solve the unbalanced optimal transport problem with source using the Douglas-\
         Rachford algorithm.
@@ -473,7 +477,10 @@ def computeGeodesic(
         print("Computing geodesic for standard optimal transport...")
         rho1 *= nx.sum(rho0) / nx.sum(rho1)
         delta = 1.0  # Ensure delta is set correctly for non-source problems
-        alpha, gamma = 1.8, max(nx.max(rho0), nx.max(rho1)) / 2
+        if alpha is None:
+            alpha = 1.8
+        if gamma is None:
+            gamma = max(nx.max(rho0), nx.max(rho1)) / 2
     else:
         if H is None or F is None:
             print("Computing a geodesic for optimal transport with source...")
@@ -481,10 +488,10 @@ def computeGeodesic(
             print(
                 "Computing a geodesic for optimal transport with source and constraint..."
             )
-        alpha, gamma = (
-            1.8,
-            delta ** (rho0.ndim - 1) * max(nx.max(rho0), nx.max(rho1)) / 15,
-        )
+        if alpha is None:
+            alpha = 1.8
+        if gamma is None:
+            gamma = delta**rho0.ndim * max(nx.max(rho0), nx.max(rho1)) / 15
 
     # Initialize using linear interpolation
     w, x, y, z = [grids.CSvar(rho0, rho1, T, ll) for _ in range(4)]
@@ -528,10 +535,10 @@ def computeGeodesic(
             HFlist[i] = z.dist_from_constraint(H, F)
 
     # Final projection and positive density adjustment
-    projCE_(z.U, z.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
+    # projCE_(z.U, z.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
     z.proj_positive()
     z.dilate_grid(delta)  # Adjust back to original scale
-    z.interp_()  # Final interpolation adjustment
+    # z.interp_()  # Final interpolation adjustment
 
     print("\nDone.")
 

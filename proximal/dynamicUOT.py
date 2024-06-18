@@ -535,10 +535,10 @@ def computeGeodesic(
             HFlist[i] = z.dist_from_constraint(H, F)
 
     # Final projection and positive density adjustment
-    # projCE_(z.U, z.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
+    projCE_(z.U, z.U, rho0 * delta**rho0.ndim, rho1 * delta**rho0.ndim, source)
     z.proj_positive()
     z.dilate_grid(delta)  # Adjust back to original scale
-    # z.interp_()  # Final interpolation adjustment
+    z.interp_()  # Final interpolation adjustment
 
     print("\nDone.")
 

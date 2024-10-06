@@ -117,13 +117,15 @@ class Cvar(Var):
         assert Z.shape == cs
         super().__init__(cs, ll, D, Z)
 
-    def energy(self, delta: float, p: float, q: float):
+    def energy(self, delta: float, p: float, q: float, max_ratio=100):
         """Compute the energy of the variable
         ∫∫ (1/p) |ω|^p/rho^(p-1) + s^p (1/q) |ζ|^q/rho^(q-1).
         """
         fp = self.nx.zeros(self.cs, type_as=self.D[0])  # s^p (1/q) |ζ|^q/rho^(q-1)
         fq = self.nx.zeros(self.cs, type_as=self.D[0])  # (1/p) |ω|^p/rho^(p-1)
-        ind = self.D[0] > 0
+        ind = (
+            self.D[0] > self.nx.max(self.D[0]) / max_ratio
+        )  # indices with large enough density
         if q >= 1:
             fp[ind] = (
                 (delta**p / q)
